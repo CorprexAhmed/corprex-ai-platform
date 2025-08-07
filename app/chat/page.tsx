@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { UserButton, useUser } from "@clerk/nextjs";
 import { useRouter } from 'next/navigation';
-import { supabase, type Conversation, type Message } from '@/lib/supabase';
+import { supabase, type Conversation } from '@/lib/supabase';
 import { AI_MODELS, getModelConfig } from '@/lib/ai-models';
 import { exportToMarkdown, exportToJSON, downloadFile, copyToClipboard } from '@/lib/export-utils';
 import { VoiceInput, VoiceOutput } from '@/lib/voice-utils';
@@ -20,9 +20,21 @@ export default function ChatPage() {
   const [voiceEnabled, setVoiceEnabled] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   
+  // New features state
+  const [showImageGen, setShowImageGen] = useState(false);
+  const [imagePrompt, setImagePrompt] = useState('');
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [folders, setFolders] = useState(['General', 'Work', 'Personal', 'Research']);
+  const [selectedFolder, setSelectedFolder] = useState('General');
+  const [showSettings, setShowSettings] = useState(false);
+  const [customInstructions, setCustomInstructions] = useState('');
+  const [showAnalytics, setShowAnalytics] = useState(false);
+  const [pinnedChats, setPinnedChats] = useState<string[]>([]);
+  
   const voiceInput = useRef<VoiceInput | null>(null);
   const voiceOutput = useRef<VoiceOutput | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
   
   useEffect(() => {
     if (isLoaded && !isSignedIn) {
@@ -33,15 +45,19 @@ export default function ChatPage() {
   useEffect(() => {
     voiceInput.current = new VoiceInput();
     voiceOutput.current = new VoiceOutput();
+    
+    // Load custom instructions
+    const saved = localStorage.getItem('customInstructions');
+    if (saved) setCustomInstructions(saved);
   }, []);
 
   useEffect(() => {
     if (user) {
       loadConversations();
     }
-  }, [user]);
+  }, [user, selectedFolder]);
 
-  const [messages, setMessages] = useState<Array<{role: string, content: string, timestamp: Date}>>([]);
+  const [messages, setMessages] = useState<Array<{role: string, content: string, timestamp: Date, type?: string}>>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
@@ -84,7 +100,8 @@ export default function ChatPage() {
       const formattedMessages = data.map(msg => ({
         role: msg.role,
         content: msg.content,
-        timestamp: new Date(msg.created_at)
+        timestamp: new Date(msg.created_at),
+        type: msg.type || 'text'
       }));
       setMessages(formattedMessages);
       setCurrentConversationId(conversationId);
@@ -106,7 +123,8 @@ export default function ChatPage() {
       .insert({
         user_id: user.id,
         title: title,
-        model: selectedModel
+        model: selectedModel,
+        folder: selectedFolder
       })
       .select()
       .single();
@@ -118,13 +136,14 @@ export default function ChatPage() {
     return null;
   };
 
-  const saveMessage = async (conversationId: string, role: string, content: string) => {
+  const saveMessage = async (conversationId: string, role: string, content: string, type: string = 'text') => {
     await supabase
       .from('messages')
       .insert({
         conversation_id: conversationId,
         role: role,
-        content: content
+        content: content,
+        type: type
       });
   };
 
@@ -159,6 +178,62 @@ export default function ChatPage() {
     reader.readAsText(file);
   };
 
+  const handlePDFUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    try {
+      const response = await fetch('/api/pdf', {
+        method: 'POST',
+        body: formData,
+      });
+      
+      const data = await response.json();
+      setInput(`[PDF Document: ${data.filename}]\n\nContent: ${data.text}`);
+    } catch (error) {
+      console.error('PDF upload failed:', error);
+    }
+  };
+
+  const generateImage = async () => {
+    if (!imagePrompt.trim() || isGeneratingImage) return;
+    
+    setIsGeneratingImage(true);
+    try {
+      const response = await fetch('/api/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: imagePrompt }),
+      });
+      
+      const data = await response.json();
+      if (data.imageUrl) {
+        const imageMessage = {
+          role: 'assistant',
+          content: `Generated image: "${imagePrompt}"`,
+          timestamp: new Date(),
+          type: 'image',
+          imageUrl: data.imageUrl
+        };
+        setMessages(prev => [...prev, imageMessage]);
+        setImagePrompt('');
+        setShowImageGen(false);
+        
+        // Save to conversation
+        if (currentConversationId) {
+          await saveMessage(currentConversationId, 'assistant', data.imageUrl, 'image');
+        }
+      }
+    } catch (error) {
+      console.error('Image generation failed:', error);
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
@@ -174,7 +249,8 @@ export default function ChatPage() {
     const userMessage = { 
       role: 'user', 
       content: input,
-      timestamp: new Date()
+      timestamp: new Date(),
+      type: 'text'
     };
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
@@ -185,11 +261,16 @@ export default function ChatPage() {
     await saveMessage(convId, 'user', input);
 
     try {
+      // Add custom instructions to context
+      const messagesWithContext = customInstructions 
+        ? [{ role: 'system', content: customInstructions }, ...newMessages]
+        : newMessages;
+      
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          messages: newMessages,
+          messages: messagesWithContext,
           model: selectedModel 
         }),
       });
@@ -202,7 +283,8 @@ export default function ChatPage() {
       const assistantMessage = { 
         role: 'assistant', 
         content: data.content,
-        timestamp: new Date()
+        timestamp: new Date(),
+        type: 'text'
       };
       
       setMessages([...newMessages, assistantMessage]);
@@ -228,7 +310,8 @@ export default function ChatPage() {
       setMessages([...newMessages, { 
         role: 'assistant', 
         content: 'An error occurred. Please try again.',
-        timestamp: new Date()
+        timestamp: new Date(),
+        type: 'text'
       }]);
     } finally {
       setIsLoading(false);
@@ -245,7 +328,6 @@ export default function ChatPage() {
     } else if (format === 'copy') {
       const text = messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
       copyToClipboard(text);
-      // Show a subtle notification instead of alert
       const notification = document.createElement('div');
       notification.textContent = 'Conversation copied';
       notification.className = 'fixed bottom-4 right-4 bg-white text-black px-4 py-2 rounded shadow-lg z-50';
@@ -273,6 +355,14 @@ export default function ChatPage() {
     await loadConversations();
   };
 
+  const togglePinChat = (id: string) => {
+    setPinnedChats(prev => 
+      prev.includes(id) 
+        ? prev.filter(p => p !== id)
+        : [...prev, id]
+    );
+  };
+
   const formatTime = (date: Date) => {
     return new Date(date).toLocaleTimeString('en-US', { 
       hour: 'numeric', 
@@ -294,7 +384,7 @@ export default function ChatPage() {
 
   return (
     <div className="min-h-screen bg-black flex">
-      {/* Sidebar */}
+      {/* Enhanced Sidebar */}
       <div className={`${showSidebar ? 'w-64' : 'w-0'} transition-all duration-300 bg-[#0a0a0a] border-r border-[#333333] overflow-hidden flex flex-col`}>
         <div className="p-4 border-b border-[#333333]">
           <button
@@ -303,6 +393,19 @@ export default function ChatPage() {
           >
             NEW CONVERSATION
           </button>
+        </div>
+        
+        {/* Folder Selector */}
+        <div className="p-4 border-b border-[#333333]">
+          <select
+            value={selectedFolder}
+            onChange={(e) => setSelectedFolder(e.target.value)}
+            className="w-full px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white text-sm"
+          >
+            {folders.map(folder => (
+              <option key={folder} value={folder}>{folder}</option>
+            ))}
+          </select>
         </div>
         
         <div className="p-4 border-b border-[#333333]">
@@ -315,49 +418,103 @@ export default function ChatPage() {
           />
         </div>
         
+        {/* Pinned Chats */}
+        {pinnedChats.length > 0 && (
+          <div className="p-4 border-b border-[#333333]">
+            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Pinned</h3>
+            <div className="space-y-2">
+              {filteredConversations
+                .filter(conv => pinnedChats.includes(conv.id))
+                .map((conv) => (
+                  <div
+                    key={conv.id}
+                    className={`p-2 cursor-pointer hover:bg-[#1a1a1a] transition-colors ${
+                      currentConversationId === conv.id ? 'bg-[#1a1a1a] border-l-2 border-white' : ''
+                    }`}
+                    onClick={() => loadConversation(conv.id)}
+                  >
+                    <p className="text-sm text-white truncate">{conv.title}</p>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+        
+        {/* Regular Conversations */}
         <div className="flex-1 p-4 overflow-y-auto">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">History</h3>
           <div className="space-y-2">
-            {filteredConversations.map((conv) => (
-              <div
-                key={conv.id}
-                className={`p-2 cursor-pointer hover:bg-[#1a1a1a] transition-colors ${
-                  currentConversationId === conv.id ? 'bg-[#1a1a1a] border-l-2 border-white' : ''
-                }`}
-              >
-                <div 
-                  onClick={() => loadConversation(conv.id)}
-                  className="flex justify-between items-start"
+            {filteredConversations
+              .filter(conv => !pinnedChats.includes(conv.id))
+              .map((conv) => (
+                <div
+                  key={conv.id}
+                  className={`p-2 cursor-pointer hover:bg-[#1a1a1a] transition-colors ${
+                    currentConversationId === conv.id ? 'bg-[#1a1a1a] border-l-2 border-white' : ''
+                  }`}
                 >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-white truncate">
-                      {conv.title}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {new Date(conv.updated_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteConversation(conv.id);
-                    }}
-                    className="ml-2 p-1 hover:bg-[#2a2a2a] rounded transition-colors"
+                  <div 
+                    onClick={() => loadConversation(conv.id)}
+                    className="flex justify-between items-start"
                   >
-                    <svg className="w-4 h-4 text-gray-500 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-white truncate">
+                        {conv.title}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {new Date(conv.updated_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <div className="flex gap-1">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          togglePinChat(conv.id);
+                        }}
+                        className="p-1 hover:bg-[#2a2a2a] rounded transition-colors"
+                      >
+                        <svg className={`w-3 h-3 ${pinnedChats.includes(conv.id) ? 'text-white' : 'text-gray-500'}`} fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M10 2a1 1 0 011 1v5.268l2.683-2.683a1 1 0 111.414 1.414L12.414 9.682a1 1 0 01-1.414 0L8.317 6.999a1 1 0 111.414-1.414L10 6.268V3a1 1 0 011-1z"/>
+                        </svg>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteConversation(conv.id);
+                        }}
+                        className="p-1 hover:bg-[#2a2a2a] rounded transition-colors"
+                      >
+                        <svg className="w-3 h-3 text-gray-500 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
           </div>
         </div>
 
-        <div className="p-4 border-t border-[#333333]">
-          <p className="text-xs text-gray-500 text-center">
-            CORPREX AI PLATFORM
-          </p>
+        <div className="p-4 border-t border-[#333333] flex justify-around">
+          <button
+            onClick={() => setShowSettings(true)}
+            className="p-2 hover:bg-[#1a1a1a] rounded transition-colors"
+            title="Settings"
+          >
+            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+            </svg>
+          </button>
+          <button
+            onClick={() => router.push('/analytics')}
+            className="p-2 hover:bg-[#1a1a1a] rounded transition-colors"
+            title="Analytics"
+          >
+            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -487,9 +644,27 @@ export default function ChatPage() {
                             {formatTime(message.timestamp)}
                           </span>
                         </div>
-                        <div className="text-gray-300 whitespace-pre-wrap">
-                          {message.content}
-                        </div>
+                        {message.type === 'image' && message.imageUrl ? (
+                          <div className="mt-2">
+                            <p className="text-gray-300 mb-2">{message.content}</p>
+                            <img 
+                              src={message.imageUrl} 
+                              alt="Generated image" 
+                              className="max-w-md rounded border border-[#333333]"
+                            />
+                            <a 
+                              href={message.imageUrl}
+                              download
+                              className="inline-block mt-2 text-xs text-gray-500 hover:text-white"
+                            >
+                              Download Image
+                            </a>
+                          </div>
+                        ) : (
+                          <div className="text-gray-300 whitespace-pre-wrap">
+                            {message.content}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -517,61 +692,150 @@ export default function ChatPage() {
           </div>
         </div>
 
-        {/* Input Area */}
-        <div className="border-t border-[#333333] bg-[#0a0a0a] p-4">
-          <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
-            <div className="flex gap-2">
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileUpload}
-                className="hidden"
-                accept=".txt,.md,.csv"
-              />
-              
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="p-3 hover:bg-[#1a1a1a] transition-colors text-white"
-                title="Upload file"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                </svg>
-              </button>
-              
-              <button
-                type="button"
-                onClick={handleVoiceInput}
-                className={`p-3 transition-colors ${isListening ? 'bg-red-600 text-white' : 'hover:bg-[#1a1a1a] text-white'}`}
-                title="Voice input"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                </svg>
-              </button>
-              
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder="Message Corprex AI..."
-                disabled={isLoading}
-                className="flex-1 px-4 py-3 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white transition-colors"
-                autoFocus
-              />
-              
-              <button
-                type="submit"
-                disabled={isLoading || !input.trim()}
-                className="px-6 py-3 bg-white text-black font-medium hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors uppercase text-sm tracking-wider"
-              >
-                Send
-              </button>
+        {/* Input Area with Image Generation */}
+        <div className="border-t border-[#333333] bg-[#0a0a0a]">
+          {/* Image Generation Panel */}
+          {showImageGen && (
+            <div className="border-b border-[#333333] p-4">
+              <div className="max-w-4xl mx-auto flex gap-2">
+                <input
+                  type="text"
+                  value={imagePrompt}
+                  onChange={(e) => setImagePrompt(e.target.value)}
+                  placeholder="Describe the image you want to generate..."
+                  className="flex-1 px-4 py-2 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white"
+                />
+                <button
+                  onClick={generateImage}
+                  disabled={isGeneratingImage || !imagePrompt.trim()}
+                  className="px-6 py-2 bg-white text-black font-medium hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors uppercase text-sm tracking-wider"
+                >
+                  {isGeneratingImage ? 'Generating...' : 'Generate'}
+                </button>
+              </div>
             </div>
-          </form>
+          )}
+          
+          <div className="p-4">
+            <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
+              <div className="flex gap-2">
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleFileUpload}
+                  className="hidden"
+                  accept=".txt,.md,.csv"
+                />
+                
+                <input
+                  type="file"
+                  ref={pdfInputRef}
+                  onChange={handlePDFUpload}
+                  className="hidden"
+                  accept=".pdf"
+                />
+                
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-3 hover:bg-[#1a1a1a] transition-colors text-white"
+                  title="Upload file"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                  </svg>
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => pdfInputRef.current?.click()}
+                  className="p-3 hover:bg-[#1a1a1a] transition-colors text-white"
+                  title="Upload PDF"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                  </svg>
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={() => setShowImageGen(!showImageGen)}
+                  className="p-3 hover:bg-[#1a1a1a] transition-colors text-white"
+                  title="Generate image"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                </button>
+                
+                <button
+                  type="button"
+                  onClick={handleVoiceInput}
+                  className={`p-3 transition-colors ${isListening ? 'bg-red-600 text-white' : 'hover:bg-[#1a1a1a] text-white'}`}
+                  title="Voice input"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  </svg>
+                </button>
+                
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Message Corprex AI..."
+                  disabled={isLoading}
+                  className="flex-1 px-4 py-3 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white transition-colors"
+                  autoFocus
+                />
+                
+                <button
+                  type="submit"
+                  disabled={isLoading || !input.trim()}
+                  className="px-6 py-3 bg-white text-black font-medium hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors uppercase text-sm tracking-wider"
+                >
+                  Send
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-[#0a0a0a] border border-[#333333] p-6 max-w-md w-full">
+            <h2 className="text-xl font-bold text-white mb-4">Custom Instructions</h2>
+            <p className="text-gray-400 text-sm mb-4">
+              Tell the AI how you want it to behave. These instructions will be applied to all conversations.
+            </p>
+            <textarea
+              value={customInstructions}
+              onChange={(e) => setCustomInstructions(e.target.value)}
+              placeholder="Example: Always be concise and professional. Focus on technical accuracy. Respond in a formal tone."
+              className="w-full h-32 px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white"
+            />
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setShowSettings(false)}
+                className="px-4 py-2 bg-[#1a1a1a] text-white hover:bg-[#2a2a2a] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  localStorage.setItem('customInstructions', customInstructions);
+                  setShowSettings(false);
+                }}
+                className="px-4 py-2 bg-white text-black hover:bg-gray-200 transition-colors"
+              >
+                Save Instructions
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
