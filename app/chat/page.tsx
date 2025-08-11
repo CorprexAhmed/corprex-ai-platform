@@ -57,7 +57,7 @@ export default function ChatPage() {
     }
   }, [user, selectedFolder]);
 
-  const [messages, setMessages] = useState<Array<{role: string, content: string, timestamp: Date, type?: string}>>([]);
+  const [messages, setMessages] = useState<Array<{role: string, content: string, timestamp: Date, type?: string, imageUrl?: string}>>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
@@ -240,9 +240,13 @@ export default function ChatPage() {
 
     let convId = currentConversationId;
     
+    // FIX: Create conversation if needed - this ensures new users can chat
     if (!convId) {
       convId = await createNewConversation(input);
-      if (!convId) return;
+      if (!convId) {
+        console.error('Failed to create conversation');
+        return;
+      }
       setCurrentConversationId(convId);
     }
 
@@ -363,479 +367,414 @@ export default function ChatPage() {
     );
   };
 
-  const formatTime = (date: Date) => {
-    return new Date(date).toLocaleTimeString('en-US', { 
-      hour: 'numeric', 
-      minute: '2-digit',
-      hour12: true 
-    });
-  };
+  const pinnedConversations = filteredConversations.filter(c => pinnedChats.includes(c.id));
+  const unpinnedConversations = filteredConversations.filter(c => !pinnedChats.includes(c.id));
 
   if (!isLoaded) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-black">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-gray-500">Loading Corprex AI...</p>
-        </div>
-      </div>
-    );
+    return <div className="flex items-center justify-center h-screen bg-black">
+      <div className="text-white">Loading...</div>
+    </div>;
   }
 
   return (
-    <div className="min-h-screen bg-black flex">
-      {/* Enhanced Sidebar */}
-      <div className={`${showSidebar ? 'w-64' : 'w-0'} transition-all duration-300 bg-[#0a0a0a] border-r border-[#333333] overflow-hidden flex flex-col`}>
+    <div className="flex h-screen bg-black text-white overflow-hidden">
+      {/* Sidebar */}
+      <div className={`${showSidebar ? 'w-64' : 'w-0'} bg-[#0a0a0a] border-r border-[#333333] flex flex-col transition-all duration-300 overflow-hidden`}>
         <div className="p-4 border-b border-[#333333]">
           <button
             onClick={clearChat}
-            className="w-full px-4 py-2 bg-white text-black font-medium hover:bg-gray-200 transition-colors"
+            className="w-full px-4 py-2 bg-white text-black hover:bg-gray-200 transition-colors font-medium"
           >
-            NEW CONVERSATION
+            NEW CHAT
           </button>
-        </div>
-        
-        {/* Folder Selector */}
-        <div className="p-4 border-b border-[#333333]">
-          <select
-            value={selectedFolder}
-            onChange={(e) => setSelectedFolder(e.target.value)}
-            className="w-full px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white text-sm"
-          >
-            {folders.map(folder => (
-              <option key={folder} value={folder}>{folder}</option>
-            ))}
-          </select>
-        </div>
-        
-        <div className="p-4 border-b border-[#333333]">
-          <input
-            type="text"
-            placeholder="Search conversations..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white transition-colors"
-          />
-        </div>
-        
-        {/* Pinned Chats */}
-        {pinnedChats.length > 0 && (
-          <div className="p-4 border-b border-[#333333]">
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Pinned</h3>
-            <div className="space-y-2">
-              {filteredConversations
-                .filter(conv => pinnedChats.includes(conv.id))
-                .map((conv) => (
-                  <div
-                    key={conv.id}
-                    className={`p-2 cursor-pointer hover:bg-[#1a1a1a] transition-colors ${
-                      currentConversationId === conv.id ? 'bg-[#1a1a1a] border-l-2 border-white' : ''
-                    }`}
-                    onClick={() => loadConversation(conv.id)}
-                  >
-                    <p className="text-sm text-white truncate">{conv.title}</p>
-                  </div>
-                ))}
-            </div>
+          
+          <div className="mt-4">
+            <input
+              type="text"
+              placeholder="Search conversations..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white"
+            />
           </div>
-        )}
+
+          <div className="mt-4">
+            <select
+              value={selectedFolder}
+              onChange={(e) => setSelectedFolder(e.target.value)}
+              className="w-full px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white focus:outline-none focus:border-white"
+            >
+              {folders.map(folder => (
+                <option key={folder} value={folder}>{folder}</option>
+              ))}
+            </select>
+          </div>
+        </div>
         
-        {/* Regular Conversations */}
-        <div className="flex-1 p-4 overflow-y-auto">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">History</h3>
-          <div className="space-y-2">
-            {filteredConversations
-              .filter(conv => !pinnedChats.includes(conv.id))
-              .map((conv) => (
-                <div
-                  key={conv.id}
-                  className={`p-2 cursor-pointer hover:bg-[#1a1a1a] transition-colors ${
-                    currentConversationId === conv.id ? 'bg-[#1a1a1a] border-l-2 border-white' : ''
-                  }`}
-                >
-                  <div 
-                    onClick={() => loadConversation(conv.id)}
-                    className="flex justify-between items-start"
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {pinnedConversations.length > 0 && (
+            <>
+              <div className="text-xs text-gray-500 uppercase tracking-wider mb-2">Pinned</div>
+              {pinnedConversations.map(conv => (
+                <div key={conv.id} className="flex items-center space-x-2">
+                  <button
+                    onClick={() => togglePinChat(conv.id)}
+                    className="text-gray-400 hover:text-white"
                   >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white truncate">
-                        {conv.title}
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {new Date(conv.updated_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <div className="flex gap-1">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          togglePinChat(conv.id);
-                        }}
-                        className="p-1 hover:bg-[#2a2a2a] rounded transition-colors"
-                      >
-                        <svg className={`w-3 h-3 ${pinnedChats.includes(conv.id) ? 'text-white' : 'text-gray-500'}`} fill="currentColor" viewBox="0 0 20 20">
-                          <path d="M10 2a1 1 0 011 1v5.268l2.683-2.683a1 1 0 111.414 1.414L12.414 9.682a1 1 0 01-1.414 0L8.317 6.999a1 1 0 111.414-1.414L10 6.268V3a1 1 0 011-1z"/>
-                        </svg>
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteConversation(conv.id);
-                        }}
-                        className="p-1 hover:bg-[#2a2a2a] rounded transition-colors"
-                      >
-                        <svg className="w-3 h-3 text-gray-500 hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M10 2a5 5 0 00-5 5v2a2 2 0 00-2 2v5a2 2 0 002 2h10a2 2 0 002-2v-5a2 2 0 00-2-2H7V7a3 3 0 016 0v2h2V7a5 5 0 00-5-5z"/>
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => loadConversation(conv.id)}
+                    className={`flex-1 text-left px-3 py-2 hover:bg-[#1a1a1a] transition-colors truncate ${
+                      conv.id === currentConversationId ? 'bg-[#1a1a1a] border-l-2 border-white' : ''
+                    }`}
+                  >
+                    {conv.title}
+                  </button>
+                  <button
+                    onClick={() => deleteConversation(conv.id)}
+                    className="text-gray-400 hover:text-red-500 text-xl"
+                  >
+                    ×
+                  </button>
                 </div>
               ))}
-          </div>
-        </div>
-
-        <div className="p-4 border-t border-[#333333] flex justify-around">
-          <button
-            onClick={() => setShowSettings(true)}
-            className="p-2 hover:bg-[#1a1a1a] rounded transition-colors"
-            title="Settings"
-          >
-            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-            </svg>
-          </button>
-          <button
-            onClick={() => router.push('/analytics')}
-            className="p-2 hover:bg-[#1a1a1a] rounded transition-colors"
-            title="Analytics"
-          >
-            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-            </svg>
-          </button>
+            </>
+          )}
+          
+          {unpinnedConversations.length > 0 && (
+            <>
+              <div className="text-xs text-gray-500 uppercase tracking-wider mb-2 mt-4">Recent</div>
+              {unpinnedConversations.map(conv => (
+                <div key={conv.id} className="flex items-center space-x-2">
+                  <button
+                    onClick={() => togglePinChat(conv.id)}
+                    className="text-gray-400 hover:text-white opacity-50"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => loadConversation(conv.id)}
+                    className={`flex-1 text-left px-3 py-2 hover:bg-[#1a1a1a] transition-colors truncate ${
+                      conv.id === currentConversationId ? 'bg-[#1a1a1a] border-l-2 border-white' : ''
+                    }`}
+                  >
+                    {conv.title}
+                  </button>
+                  <button
+                    onClick={() => deleteConversation(conv.id)}
+                    className="text-gray-400 hover:text-red-500 text-xl"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       </div>
 
       {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <div className="bg-[#0a0a0a] border-b border-[#333333]">
-          <div className="px-4 py-3">
-            <div className="flex justify-between items-center">
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={() => setShowSidebar(!showSidebar)}
-                  className="p-2 hover:bg-[#1a1a1a] transition-colors"
-                >
-                  <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                  </svg>
-                </button>
-                
-                <div className="flex items-center gap-3">
-                  <h1 className="text-lg font-semibold text-white tracking-tight">CORPREX</h1>
-                  <div className="w-px h-6 bg-[#333333]"></div>
-                  <select
-                    value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
-                    className="px-3 py-1.5 bg-[#1a1a1a] border border-[#333333] text-white text-sm focus:outline-none focus:border-white transition-colors"
-                  >
-                    {AI_MODELS.map(model => (
-                      <option key={model.id} value={model.id}>
-                        {model.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setVoiceEnabled(!voiceEnabled)}
-                  className={`p-2 transition-colors ${voiceEnabled ? 'bg-white text-black' : 'hover:bg-[#1a1a1a] text-white'}`}
-                  title="Toggle voice output"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                  </svg>
-                </button>
-                
-                <div className="relative">
-                  <button
-                    onClick={() => setShowExportMenu(!showExportMenu)}
-                    className="p-2 hover:bg-[#1a1a1a] transition-colors text-white"
-                  >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                  </button>
-                  
-                  {showExportMenu && (
-                    <div className="absolute right-0 mt-2 w-48 bg-[#0a0a0a] border border-[#333333] shadow-xl">
-                      <button
-                        onClick={() => handleExport('markdown')}
-                        className="w-full text-left px-4 py-2 text-white hover:bg-[#1a1a1a] transition-colors text-sm"
-                      >
-                        Export as Markdown
-                      </button>
-                      <button
-                        onClick={() => handleExport('json')}
-                        className="w-full text-left px-4 py-2 text-white hover:bg-[#1a1a1a] transition-colors text-sm"
-                      >
-                        Export as JSON
-                      </button>
-                      <button
-                        onClick={() => handleExport('copy')}
-                        className="w-full text-left px-4 py-2 text-white hover:bg-[#1a1a1a] transition-colors text-sm"
-                      >
-                        Copy to Clipboard
-                      </button>
-                    </div>
-                  )}
-                </div>
-                
-                <UserButton 
-                  afterSignOutUrl="/"
-                  appearance={{
-                    elements: {
-                      avatarBox: "w-8 h-8"
-                    }
-                  }}
-                />
-              </div>
-            </div>
-          </div>
-        </div>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* FIX: Fixed/Sticky Header */}
+        <header className="sticky top-0 z-10 bg-black border-b border-[#333333] px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center space-x-4">
+            <button
+              onClick={() => setShowSidebar(!showSidebar)}
+              className="text-gray-400 hover:text-white"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="px-4 py-2 bg-[#1a1a1a] border border-[#333333] text-white focus:outline-none focus:border-white"
+            >
+              {Object.entries(AI_MODELS).map(([key, model]) => (
+                <option key={key} value={key}>{model.name}</option>
+              ))}
+            </select>
 
-        {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto bg-black">
-          <div className="max-w-4xl mx-auto p-4">
-            {messages.length === 0 ? (
-              <div className="flex items-center justify-center h-full min-h-[60vh]">
-                <div className="text-center">
-                  <h2 className="text-2xl font-light text-white mb-2">Corprex AI</h2>
-                  <p className="text-gray-500 text-sm">Select a model and begin your conversation</p>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-6">
-                {messages.map((message, index) => (
-                  <div
-                    key={index}
-                    className="animate-slide-up"
-                  >
-                    <div className="flex items-start gap-4">
-                      <div className={`w-8 h-8 flex items-center justify-center text-xs font-semibold ${
-                        message.role === 'user' 
-                          ? 'bg-white text-black' 
-                          : 'bg-[#1a1a1a] text-white border border-[#333333]'
-                      }`}>
-                        {message.role === 'user' ? user?.firstName?.[0] || 'U' : 'AI'}
-                      </div>
-                      
-                      <div className="flex-1">
-                        <div className="flex items-baseline gap-3 mb-1">
-                          <span className="text-sm font-medium text-white">
-                            {message.role === 'user' ? 'You' : getModelConfig(selectedModel).name}
-                          </span>
-                          <span className="text-xs text-gray-500">
-                            {formatTime(message.timestamp)}
-                          </span>
-                        </div>
-                        {message.type === 'image' && message.imageUrl ? (
-                          <div className="mt-2">
-                            <p className="text-gray-300 mb-2">{message.content}</p>
-                            <img 
-                              src={message.imageUrl} 
-                              alt="Generated image" 
-                              className="max-w-md rounded border border-[#333333]"
-                            />
-                            <a 
-                              href={message.imageUrl}
-                              download
-                              className="inline-block mt-2 text-xs text-gray-500 hover:text-white"
-                            >
-                              Download Image
-                            </a>
-                          </div>
-                        ) : (
-                          <div className="text-gray-300 whitespace-pre-wrap">
-                            {message.content}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                
-                {isTyping && (
-                  <div className="animate-slide-up">
-                    <div className="flex items-start gap-4">
-                      <div className="w-8 h-8 bg-[#1a1a1a] border border-[#333333] flex items-center justify-center text-xs font-semibold text-white">
-                        AI
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-1 mt-2">
-                          <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
-                          <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
-                          <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                <div ref={messagesEndRef} />
-              </div>
-            )}
-          </div>
-        </div>
+            <button
+              onClick={() => setVoiceEnabled(!voiceEnabled)}
+              className={`px-3 py-2 border ${voiceEnabled ? 'bg-white text-black' : 'border-[#333333] text-white'} hover:bg-gray-200 transition-colors`}
+            >
+              {voiceEnabled ? 'VOICE ON' : 'VOICE OFF'}
+            </button>
 
-        {/* Input Area with Image Generation */}
-        <div className="border-t border-[#333333] bg-[#0a0a0a]">
-          {/* Image Generation Panel */}
-          {showImageGen && (
-            <div className="border-b border-[#333333] p-4">
-              <div className="max-w-4xl mx-auto flex gap-2">
-                <input
-                  type="text"
-                  value={imagePrompt}
-                  onChange={(e) => setImagePrompt(e.target.value)}
-                  placeholder="Describe the image you want to generate..."
-                  className="flex-1 px-4 py-2 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white"
-                />
-                <button
-                  onClick={generateImage}
-                  disabled={isGeneratingImage || !imagePrompt.trim()}
-                  className="px-6 py-2 bg-white text-black font-medium hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors uppercase text-sm tracking-wider"
-                >
-                  {isGeneratingImage ? 'Generating...' : 'Generate'}
-                </button>
-              </div>
-            </div>
-          )}
+            <button
+              onClick={() => setShowImageGen(!showImageGen)}
+              className="px-3 py-2 border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+            >
+              IMAGE
+            </button>
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="px-3 py-2 border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+            >
+              FILE
+            </button>
+
+            <button
+              onClick={() => pdfInputRef.current?.click()}
+              className="px-3 py-2 border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+            >
+              PDF
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,.md,.json,.csv"
+              onChange={handleFileUpload}
+              className="hidden"
+            />
+
+            <input
+              ref={pdfInputRef}
+              type="file"
+              accept=".pdf"
+              onChange={handlePDFUpload}
+              className="hidden"
+            />
+          </div>
           
-          <div className="p-4">
-            <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
-              <div className="flex gap-2">
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleFileUpload}
-                  className="hidden"
-                  accept=".txt,.md,.csv"
-                />
-                
-                <input
-                  type="file"
-                  ref={pdfInputRef}
-                  onChange={handlePDFUpload}
-                  className="hidden"
-                  accept=".pdf"
-                />
-                
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="p-3 hover:bg-[#1a1a1a] transition-colors text-white"
-                  title="Upload file"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                  </svg>
-                </button>
-                
-                <button
-                  type="button"
-                  onClick={() => pdfInputRef.current?.click()}
-                  className="p-3 hover:bg-[#1a1a1a] transition-colors text-white"
-                  title="Upload PDF"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
-                  </svg>
-                </button>
-                
-                <button
-                  type="button"
-                  onClick={() => setShowImageGen(!showImageGen)}
-                  className="p-3 hover:bg-[#1a1a1a] transition-colors text-white"
-                  title="Generate image"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                </button>
-                
-                <button
-                  type="button"
-                  onClick={handleVoiceInput}
-                  className={`p-3 transition-colors ${isListening ? 'bg-red-600 text-white' : 'hover:bg-[#1a1a1a] text-white'}`}
-                  title="Voice input"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                  </svg>
-                </button>
-                
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="Message Corprex AI..."
-                  disabled={isLoading}
-                  className="flex-1 px-4 py-3 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white transition-colors"
-                  autoFocus
-                />
-                
-                <button
-                  type="submit"
-                  disabled={isLoading || !input.trim()}
-                  className="px-6 py-3 bg-white text-black font-medium hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors uppercase text-sm tracking-wider"
-                >
-                  Send
-                </button>
-              </div>
-            </form>
+          <div className="flex items-center space-x-4">
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className="text-gray-400 hover:text-white"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+            </button>
+            
+            <button
+              onClick={() => router.push('/analytics')}
+              className="text-gray-400 hover:text-white"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            </button>
+            
+            <div className="relative">
+              <button
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                className="text-gray-400 hover:text-white"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+              </button>
+              
+              {showExportMenu && (
+                <div className="absolute right-0 mt-2 w-48 bg-[#1a1a1a] border border-[#333333] shadow-lg">
+                  <button
+                    onClick={() => handleExport('markdown')}
+                    className="block w-full text-left px-4 py-2 hover:bg-[#2a2a2a]"
+                  >
+                    Export as Markdown
+                  </button>
+                  <button
+                    onClick={() => handleExport('json')}
+                    className="block w-full text-left px-4 py-2 hover:bg-[#2a2a2a]"
+                  >
+                    Export as JSON
+                  </button>
+                  <button
+                    onClick={() => handleExport('copy')}
+                    className="block w-full text-left px-4 py-2 hover:bg-[#2a2a2a]"
+                  >
+                    Copy to Clipboard
+                  </button>
+                </div>
+              )}
+            </div>
+            
+            <UserButton 
+              appearance={{
+                elements: {
+                  userButtonAvatarBox: "w-10 h-10",
+                }
+              }}
+            />
           </div>
-        </div>
-      </div>
+        </header>
 
-      {/* Settings Modal */}
-      {showSettings && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-[#0a0a0a] border border-[#333333] p-6 max-w-md w-full">
-            <h2 className="text-xl font-bold text-white mb-4">Custom Instructions</h2>
-            <p className="text-gray-400 text-sm mb-4">
-              Tell the AI how you want it to behave. These instructions will be applied to all conversations.
-            </p>
+        {/* Settings Panel */}
+        {showSettings && (
+          <div className="bg-[#0a0a0a] border-b border-[#333333] p-4">
+            <h3 className="text-sm font-medium mb-2">Custom Instructions</h3>
             <textarea
               value={customInstructions}
-              onChange={(e) => setCustomInstructions(e.target.value)}
-              placeholder="Example: Always be concise and professional. Focus on technical accuracy. Respond in a formal tone."
-              className="w-full h-32 px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white"
+              onChange={(e) => {
+                setCustomInstructions(e.target.value);
+                localStorage.setItem('customInstructions', e.target.value);
+              }}
+              placeholder="Add custom instructions for AI responses..."
+              className="w-full px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white resize-none"
+              rows={3}
             />
-            <div className="flex justify-end gap-2 mt-4">
+          </div>
+        )}
+
+        {/* Image Generation Panel */}
+        {showImageGen && (
+          <div className="bg-[#0a0a0a] border-b border-[#333333] p-4">
+            <div className="flex space-x-2">
+              <input
+                type="text"
+                value={imagePrompt}
+                onChange={(e) => setImagePrompt(e.target.value)}
+                placeholder="Describe the image you want to generate..."
+                className="flex-1 px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white"
+              />
               <button
-                onClick={() => setShowSettings(false)}
-                className="px-4 py-2 bg-[#1a1a1a] text-white hover:bg-[#2a2a2a] transition-colors"
+                onClick={generateImage}
+                disabled={isGeneratingImage}
+                className="px-4 py-2 bg-white text-black hover:bg-gray-200 transition-colors disabled:opacity-50"
               >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  localStorage.setItem('customInstructions', customInstructions);
-                  setShowSettings(false);
-                }}
-                className="px-4 py-2 bg-white text-black hover:bg-gray-200 transition-colors"
-              >
-                Save Instructions
+                {isGeneratingImage ? 'Generating...' : 'Generate'}
               </button>
             </div>
           </div>
+        )}
+
+        {/* Messages Area - Scrollable */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {messages.length === 0 ? (
+            <div className="max-w-3xl mx-auto text-center py-12">
+              <h1 className="text-4xl font-bold mb-4">CORPREX AI</h1>
+              <p className="text-gray-400 mb-8">How can I assist you today?</p>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
+                <button
+                  onClick={() => setInput('Explain quantum computing in simple terms')}
+                  className="text-left p-4 bg-[#0a0a0a] border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+                >
+                  <div className="text-sm text-gray-500 mb-1">EXAMPLE</div>
+                  <div>Explain quantum computing</div>
+                </button>
+                
+                <button
+                  onClick={() => setInput('Write a Python function to sort a list')}
+                  className="text-left p-4 bg-[#0a0a0a] border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+                >
+                  <div className="text-sm text-gray-500 mb-1">CODE</div>
+                  <div>Write Python code</div>
+                </button>
+                
+                <button
+                  onClick={() => setInput('What are the latest AI developments?')}
+                  className="text-left p-4 bg-[#0a0a0a] border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+                >
+                  <div className="text-sm text-gray-500 mb-1">RESEARCH</div>
+                  <div>Latest AI developments</div>
+                </button>
+                
+                <button
+                  onClick={() => setInput('Help me brainstorm business ideas')}
+                  className="text-left p-4 bg-[#0a0a0a] border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+                >
+                  <div className="text-sm text-gray-500 mb-1">CREATIVE</div>
+                  <div>Brainstorm ideas</div>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              {messages.map((message, index) => (
+                <div key={index} className={`mb-6 ${message.role === 'user' ? 'text-right' : 'text-left'}`}>
+                  <div className={`inline-block max-w-3xl ${message.role === 'user' ? 'ml-auto' : ''}`}>
+                    <div className={`px-4 py-3 ${
+                      message.role === 'user' 
+                        ? 'bg-white text-black' 
+                        : 'bg-[#1a1a1a] text-white border border-[#333333]'
+                    }`}>
+                      {message.type === 'image' && message.imageUrl ? (
+                        <img src={message.imageUrl} alt="Generated" className="max-w-full h-auto" />
+                      ) : (
+                        <div className="whitespace-pre-wrap">{message.content}</div>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {message.timestamp.toLocaleTimeString()}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              
+              {isTyping && (
+                <div className="mb-6">
+                  <div className="inline-block">
+                    <div className="px-4 py-3 bg-[#1a1a1a] border border-[#333333]">
+                      <div className="flex space-x-2">
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              <div ref={messagesEndRef} />
+            </>
+          )}
         </div>
-      )}
+
+        {/* Input Area */}
+        <form onSubmit={handleSubmit} className="border-t border-[#333333] px-6 py-4 bg-black">
+          <div className="max-w-3xl mx-auto flex space-x-4">
+            {isListening && (
+              <div className="flex items-center text-red-500">
+                <svg className="w-4 h-4 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
+                  <circle cx="10" cy="10" r="10" />
+                </svg>
+                <span className="ml-2 text-sm">Listening...</span>
+              </div>
+            )}
+            
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Type your message..."
+              className="flex-1 px-4 py-3 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white"
+              disabled={isLoading}
+            />
+            
+            <button
+              type="button"
+              onClick={handleVoiceInput}
+              className="px-4 py-3 border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+              disabled={isLoading}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+              </svg>
+            </button>
+            
+            <button
+              type="submit"
+              disabled={isLoading || !input.trim()}
+              className="px-6 py-3 bg-white text-black hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+            >
+              {isLoading ? 'SENDING...' : 'SEND'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
