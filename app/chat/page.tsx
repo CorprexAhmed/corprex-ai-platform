@@ -24,8 +24,6 @@ export default function ChatPage() {
   const [showImageGen, setShowImageGen] = useState(false);
   const [imagePrompt, setImagePrompt] = useState('');
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
-  const [folders, setFolders] = useState(['General', 'Work', 'Personal', 'Research']);
-  const [selectedFolder, setSelectedFolder] = useState('General');
   const [showSettings, setShowSettings] = useState(false);
   const [customInstructions, setCustomInstructions] = useState('');
   const [showAnalytics, setShowAnalytics] = useState(false);
@@ -61,7 +59,7 @@ export default function ChatPage() {
       console.log('User loaded:', user.id);
       loadConversations();
     }
-  }, [user, selectedFolder]);
+  }, [user]);
 
   const [messages, setMessages] = useState<Array<{role: string, content: string, timestamp: Date, type?: string, imageUrl?: string}>>([]);
   const [input, setInput] = useState('');
@@ -154,7 +152,6 @@ export default function ChatPage() {
       console.log('Creating conversation for user:', userId);
       console.log('Title:', title);
       console.log('Model:', selectedModel);
-      console.log('Folder:', selectedFolder);
       
       const { data, error } = await supabase
         .from('conversations')
@@ -162,7 +159,6 @@ export default function ChatPage() {
           user_id: userId,
           title: title,
           model: selectedModel,
-          folder: selectedFolder,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         })
@@ -482,18 +478,6 @@ export default function ChatPage() {
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white"
             />
-          </div>
-
-          <div className="mt-4">
-            <select
-              value={selectedFolder}
-              onChange={(e) => setSelectedFolder(e.target.value)}
-              className="w-full px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white focus:outline-none focus:border-white"
-            >
-              {folders.map(folder => (
-                <option key={folder} value={folder}>{folder}</option>
-              ))}
-            </select>
           </div>
         </div>
         

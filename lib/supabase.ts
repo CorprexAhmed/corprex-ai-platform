@@ -19,7 +19,6 @@ export interface Conversation {
   user_id: string;
   title: string;
   model?: string;
-  folder?: string;
   created_at: string;
   updated_at: string;
 }
