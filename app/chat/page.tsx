@@ -35,6 +35,7 @@ export default function ChatPage() {
   const voiceOutput = useRef<VoiceOutput | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   
   useEffect(() => {
     if (isLoaded && !isSignedIn) {
@@ -114,7 +115,10 @@ export default function ChatPage() {
   };
 
   const createNewConversation = async (firstMessage: string) => {
-    if (!user) return null;
+    if (!user) {
+      console.error('No user found');
+      return null;
+    }
 
     const title = firstMessage.slice(0, 50) + (firstMessage.length > 50 ? '...' : '');
     
@@ -129,7 +133,12 @@ export default function ChatPage() {
       .select()
       .single();
 
-    if (!error && data) {
+    if (error) {
+      console.error('Error creating conversation:', error);
+      return null;
+    }
+
+    if (data) {
       await loadConversations();
       return data.id;
     }
@@ -234,17 +243,18 @@ export default function ChatPage() {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
+  // FIX: Separate function to handle sending messages
+  const sendMessage = async (messageText: string) => {
+    if (!messageText.trim() || isLoading || !user) return;
 
     let convId = currentConversationId;
     
-    // FIX: Create conversation if needed - this ensures new users can chat
+    // Create new conversation if needed
     if (!convId) {
-      convId = await createNewConversation(input);
+      convId = await createNewConversation(messageText);
       if (!convId) {
         console.error('Failed to create conversation');
+        alert('Failed to create conversation. Please try again.');
         return;
       }
       setCurrentConversationId(convId);
@@ -252,7 +262,7 @@ export default function ChatPage() {
 
     const userMessage = { 
       role: 'user', 
-      content: input,
+      content: messageText,
       timestamp: new Date(),
       type: 'text'
     };
@@ -262,10 +272,9 @@ export default function ChatPage() {
     setIsLoading(true);
     setIsTyping(true);
 
-    await saveMessage(convId, 'user', input);
+    await saveMessage(convId, 'user', messageText);
 
     try {
-      // Add custom instructions to context
       const messagesWithContext = customInstructions 
         ? [{ role: 'system', content: customInstructions }, ...newMessages]
         : newMessages;
@@ -322,6 +331,19 @@ export default function ChatPage() {
     }
   };
 
+  // FIX: Handle form submission
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await sendMessage(input);
+  };
+
+  // FIX: Handle example prompt clicks
+  const handleExampleClick = async (prompt: string) => {
+    setInput(prompt);
+    // Automatically send the message
+    await sendMessage(prompt);
+  };
+
   const handleExport = (format: 'markdown' | 'json' | 'copy') => {
     if (format === 'markdown') {
       const markdown = exportToMarkdown(messages);
@@ -374,6 +396,10 @@ export default function ChatPage() {
     return <div className="flex items-center justify-center h-screen bg-black">
       <div className="text-white">Loading...</div>
     </div>;
+  }
+
+  if (!isSignedIn) {
+    return null;
   }
 
   return (
@@ -480,7 +506,7 @@ export default function ChatPage() {
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* FIX: Fixed/Sticky Header */}
+        {/* Fixed Header */}
         <header className="sticky top-0 z-10 bg-black border-b border-[#333333] px-6 py-4 flex items-center justify-between">
           <div className="flex items-center space-x-4">
             <button
@@ -650,7 +676,7 @@ export default function ChatPage() {
           </div>
         )}
 
-        {/* Messages Area - Scrollable */}
+        {/* Messages Area */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {messages.length === 0 ? (
             <div className="max-w-3xl mx-auto text-center py-12">
@@ -659,32 +685,36 @@ export default function ChatPage() {
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
                 <button
-                  onClick={() => setInput('Explain quantum computing in simple terms')}
+                  onClick={() => handleExampleClick('Explain quantum computing in simple terms')}
                   className="text-left p-4 bg-[#0a0a0a] border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+                  disabled={isLoading}
                 >
                   <div className="text-sm text-gray-500 mb-1">EXAMPLE</div>
                   <div>Explain quantum computing</div>
                 </button>
                 
                 <button
-                  onClick={() => setInput('Write a Python function to sort a list')}
+                  onClick={() => handleExampleClick('Write a Python function to sort a list')}
                   className="text-left p-4 bg-[#0a0a0a] border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+                  disabled={isLoading}
                 >
                   <div className="text-sm text-gray-500 mb-1">CODE</div>
                   <div>Write Python code</div>
                 </button>
                 
                 <button
-                  onClick={() => setInput('What are the latest AI developments?')}
+                  onClick={() => handleExampleClick('What are the latest AI developments?')}
                   className="text-left p-4 bg-[#0a0a0a] border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+                  disabled={isLoading}
                 >
                   <div className="text-sm text-gray-500 mb-1">RESEARCH</div>
                   <div>Latest AI developments</div>
                 </button>
                 
                 <button
-                  onClick={() => setInput('Help me brainstorm business ideas')}
+                  onClick={() => handleExampleClick('Help me brainstorm business ideas')}
                   className="text-left p-4 bg-[#0a0a0a] border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+                  disabled={isLoading}
                 >
                   <div className="text-sm text-gray-500 mb-1">CREATIVE</div>
                   <div>Brainstorm ideas</div>
@@ -734,7 +764,7 @@ export default function ChatPage() {
         </div>
 
         {/* Input Area */}
-        <form onSubmit={handleSubmit} className="border-t border-[#333333] px-6 py-4 bg-black">
+        <form ref={formRef} onSubmit={handleSubmit} className="border-t border-[#333333] px-6 py-4 bg-black">
           <div className="max-w-3xl mx-auto flex space-x-4">
             {isListening && (
               <div className="flex items-center text-red-500">
@@ -749,32 +779,3 @@ export default function ChatPage() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Type your message..."
-              className="flex-1 px-4 py-3 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white"
-              disabled={isLoading}
-            />
-            
-            <button
-              type="button"
-              onClick={handleVoiceInput}
-              className="px-4 py-3 border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
-              disabled={isLoading}
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-              </svg>
-            </button>
-            
-            <button
-              type="submit"
-              disabled={isLoading || !input.trim()}
-              className="px-6 py-3 bg-white text-black hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium"
-            >
-              {isLoading ? 'SENDING...' : 'SEND'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
