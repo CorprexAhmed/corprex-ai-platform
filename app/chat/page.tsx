@@ -35,7 +35,6 @@ export default function ChatPage() {
   const voiceOutput = useRef<VoiceOutput | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pdfInputRef = useRef<HTMLInputElement>(null);
-  const formRef = useRef<HTMLFormElement>(null);
   
   useEffect(() => {
     if (isLoaded && !isSignedIn) {
@@ -44,8 +43,13 @@ export default function ChatPage() {
   }, [isLoaded, isSignedIn, router]);
 
   useEffect(() => {
-    voiceInput.current = new VoiceInput();
-    voiceOutput.current = new VoiceOutput();
+    // Initialize voice features
+    try {
+      voiceInput.current = new VoiceInput();
+      voiceOutput.current = new VoiceOutput();
+    } catch (error) {
+      console.log('Voice features not available');
+    }
     
     // Load custom instructions
     const saved = localStorage.getItem('customInstructions');
@@ -54,6 +58,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (user) {
+      console.log('User loaded:', user.id);
       loadConversations();
     }
   }, [user, selectedFolder]);
@@ -75,14 +80,25 @@ export default function ChatPage() {
   const loadConversations = async () => {
     if (!user) return;
     
-    const { data, error } = await supabase
-      .from('conversations')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('updated_at', { ascending: false });
+    // Use Clerk's user ID format
+    const userId = user.id.startsWith('user_') ? user.id : `user_${user.id}`;
+    
+    try {
+      console.log('Loading conversations for user:', userId);
+      const { data, error } = await supabase
+        .from('conversations')
+        .select('*')
+        .eq('user_id', userId)
+        .order('updated_at', { ascending: false });
 
-    if (!error && data) {
-      setConversations(data);
+      if (error) {
+        console.error('Error loading conversations:', error);
+      } else {
+        console.log('Loaded conversations:', data?.length || 0);
+        setConversations(data || []);
+      }
+    } catch (error) {
+      console.error('Exception loading conversations:', error);
     }
   };
 
@@ -91,26 +107,35 @@ export default function ChatPage() {
   );
 
   const loadConversation = async (conversationId: string) => {
-    const { data, error } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true });
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: true });
 
-    if (!error && data) {
-      const formattedMessages = data.map(msg => ({
-        role: msg.role,
-        content: msg.content,
-        timestamp: new Date(msg.created_at),
-        type: msg.type || 'text'
-      }));
-      setMessages(formattedMessages);
-      setCurrentConversationId(conversationId);
-      
-      const conv = conversations.find(c => c.id === conversationId);
-      if (conv) {
-        setSelectedModel(conv.model || 'gpt-3.5-turbo');
+      if (error) {
+        console.error('Error loading messages:', error);
+        return;
       }
+
+      if (data) {
+        const formattedMessages = data.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+          timestamp: new Date(msg.created_at),
+          type: msg.type || 'text'
+        }));
+        setMessages(formattedMessages);
+        setCurrentConversationId(conversationId);
+        
+        const conv = conversations.find(c => c.id === conversationId);
+        if (conv) {
+          setSelectedModel(conv.model || 'gpt-3.5-turbo');
+        }
+      }
+    } catch (error) {
+      console.error('Exception loading conversation:', error);
     }
   };
 
@@ -120,40 +145,66 @@ export default function ChatPage() {
       return null;
     }
 
+    // Use Clerk's user ID format
+    const userId = user.id.startsWith('user_') ? user.id : `user_${user.id}`;
+    
     const title = firstMessage.slice(0, 50) + (firstMessage.length > 50 ? '...' : '');
     
-    const { data, error } = await supabase
-      .from('conversations')
-      .insert({
-        user_id: user.id,
-        title: title,
-        model: selectedModel,
-        folder: selectedFolder
-      })
-      .select()
-      .single();
+    try {
+      console.log('Creating conversation for user:', userId);
+      console.log('Title:', title);
+      console.log('Model:', selectedModel);
+      console.log('Folder:', selectedFolder);
+      
+      const { data, error } = await supabase
+        .from('conversations')
+        .insert({
+          user_id: userId,
+          title: title,
+          model: selectedModel,
+          folder: selectedFolder,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
 
-    if (error) {
-      console.error('Error creating conversation:', error);
-      return null;
-    }
+      if (error) {
+        console.error('Error creating conversation:', error);
+        alert(`Failed to create conversation: ${error.message}`);
+        return null;
+      }
 
-    if (data) {
-      await loadConversations();
-      return data.id;
+      if (data) {
+        console.log('Conversation created:', data.id);
+        await loadConversations();
+        return data.id;
+      }
+    } catch (error) {
+      console.error('Exception creating conversation:', error);
     }
+    
     return null;
   };
 
   const saveMessage = async (conversationId: string, role: string, content: string, type: string = 'text') => {
-    await supabase
-      .from('messages')
-      .insert({
-        conversation_id: conversationId,
-        role: role,
-        content: content,
-        type: type
-      });
+    try {
+      const { error } = await supabase
+        .from('messages')
+        .insert({
+          conversation_id: conversationId,
+          role: role,
+          content: content,
+          type: type,
+          created_at: new Date().toISOString()
+        });
+      
+      if (error) {
+        console.error('Error saving message:', error);
+      }
+    } catch (error) {
+      console.error('Exception saving message:', error);
+    }
   };
 
   const handleVoiceInput = async () => {
@@ -231,7 +282,6 @@ export default function ChatPage() {
         setImagePrompt('');
         setShowImageGen(false);
         
-        // Save to conversation
         if (currentConversationId) {
           await saveMessage(currentConversationId, 'assistant', data.imageUrl, 'image');
         }
@@ -243,18 +293,29 @@ export default function ChatPage() {
     }
   };
 
-  // FIX: Separate function to handle sending messages
+  // Main send message function
   const sendMessage = async (messageText: string) => {
-    if (!messageText.trim() || isLoading || !user) return;
+    if (!messageText.trim() || isLoading) return;
+
+    console.log('=== SEND MESSAGE DEBUG ===');
+    console.log('User:', user);
+    console.log('User ID:', user?.id);
+    console.log('Message:', messageText);
+    console.log('Current Conversation ID:', currentConversationId);
+
+    if (!user) {
+      alert('User not authenticated. Please refresh the page and try again.');
+      return;
+    }
 
     let convId = currentConversationId;
     
     // Create new conversation if needed
     if (!convId) {
+      console.log('No current conversation, creating new one...');
       convId = await createNewConversation(messageText);
       if (!convId) {
-        console.error('Failed to create conversation');
-        alert('Failed to create conversation. Please try again.');
+        console.error('Failed to create conversation - stopping');
         return;
       }
       setCurrentConversationId(convId);
@@ -288,7 +349,9 @@ export default function ChatPage() {
         }),
       });
 
-      if (!response.ok) throw new Error('Failed to get response');
+      if (!response.ok) {
+        throw new Error(`API responded with status: ${response.status}`);
+      }
       
       const data = await response.json();
       setIsTyping(false);
@@ -318,11 +381,11 @@ export default function ChatPage() {
       
       await loadConversations();
     } catch (error) {
-      console.error('Error:', error);
+      console.error('Error in sendMessage:', error);
       setIsTyping(false);
       setMessages([...newMessages, { 
         role: 'assistant', 
-        content: 'An error occurred. Please try again.',
+        content: `An error occurred: ${error}. Please check your API configuration.`,
         timestamp: new Date(),
         type: 'text'
       }]);
@@ -331,16 +394,13 @@ export default function ChatPage() {
     }
   };
 
-  // FIX: Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await sendMessage(input);
   };
 
-  // FIX: Handle example prompt clicks
   const handleExampleClick = async (prompt: string) => {
     setInput(prompt);
-    // Automatically send the message
     await sendMessage(prompt);
   };
 
@@ -438,6 +498,12 @@ export default function ChatPage() {
         </div>
         
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {conversations.length === 0 && (
+            <div className="text-gray-500 text-sm text-center py-4">
+              No conversations yet. Start a new chat!
+            </div>
+          )}
+          
           {pinnedConversations.length > 0 && (
             <>
               <div className="text-xs text-gray-500 uppercase tracking-wider mb-2">Pinned</div>
@@ -683,6 +749,13 @@ export default function ChatPage() {
               <h1 className="text-4xl font-bold mb-4">CORPREX AI</h1>
               <p className="text-gray-400 mb-8">How can I assist you today?</p>
               
+              {/* Debug info for troubleshooting */}
+              {user && (
+                <div className="text-xs text-gray-600 mb-4">
+                  User: {user.id} | Chats: {conversations.length}
+                </div>
+              )}
+              
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
                 <button
                   onClick={() => handleExampleClick('Explain quantum computing in simple terms')}
@@ -764,7 +837,7 @@ export default function ChatPage() {
         </div>
 
         {/* Input Area */}
-        <form ref={formRef} onSubmit={handleSubmit} className="border-t border-[#333333] px-6 py-4 bg-black">
+        <form onSubmit={handleSubmit} className="border-t border-[#333333] px-6 py-4 bg-black">
           <div className="max-w-3xl mx-auto flex space-x-4">
             {isListening && (
               <div className="flex items-center text-red-500">
@@ -779,3 +852,32 @@ export default function ChatPage() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
+              placeholder="Type your message..."
+              className="flex-1 px-4 py-3 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white"
+              disabled={isLoading}
+            />
+            
+            <button
+              type="button"
+              onClick={handleVoiceInput}
+              className="px-4 py-3 border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+              disabled={isLoading}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+              </svg>
+            </button>
+            
+            <button
+              type="submit"
+              disabled={isLoading || !input.trim()}
+              className="px-6 py-3 bg-white text-black hover:bg-gray-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium uppercase text-sm tracking-wider"
+            >
+              {isLoading ? 'SENDING...' : 'SEND'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
