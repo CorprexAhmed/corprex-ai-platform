@@ -61,6 +61,7 @@ export default function ChatPage() {
   const [showModelDetails, setShowModelDetails] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
+  const [showImageGen, setShowImageGen] = useState(false);
   
   // Features State
   const [isListening, setIsListening] = useState(false);
@@ -68,161 +69,51 @@ export default function ChatPage() {
   const [customInstructions, setCustomInstructions] = useState('');
   const [autoSave, setAutoSave] = useState(true);
   const [streamingEnabled, setStreamingEnabled] = useState(true);
-  const [suggestedPrompts, setSuggestedPrompts] = useState<string[]>([]);
-  const [tokenCount, setTokenCount] = useState({ input: 0, output: 0 });
-  const [estimatedCost, setEstimatedCost] = useState(0);
-  const [showImageGen, setShowImageGen] = useState(false);
-  const [imagePrompt, setImagePrompt] = useState('');
-  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(2048);
   const [pinnedChats, setPinnedChats] = useState<string[]>([]);
+  const [estimatedCost, setEstimatedCost] = useState(0);
+  const [tokenCount, setTokenCount] = useState(0);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   
-  // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const pdfInputRef = useRef<HTMLInputElement>(null);
-  const voiceInput = useRef<VoiceInput | null>(null);
-  const voiceOutput = useRef<VoiceOutput | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  
-  // Prompt Library
-  const promptLibrary = [
-    { category: "Writing", prompts: [
-      "Write a professional email about...",
-      "Create a blog post outline for...",
-      "Draft a creative story about...",
-      "Compose a persuasive essay on..."
-    ]},
-    { category: "Code", prompts: [
-      "Write a Python function that...",
-      "Debug this code: ",
-      "Optimize this algorithm: ",
-      "Convert this code to TypeScript: "
-    ]},
-    { category: "Analysis", prompts: [
-      "Analyze the pros and cons of...",
-      "Compare and contrast...",
-      "What are the implications of...",
-      "Evaluate the effectiveness of..."
-    ]},
-    { category: "Learning", prompts: [
-      "Explain like I'm 5: ",
-      "Create a study guide for...",
-      "What are the key concepts of...",
-      "Teach me about..."
-    ]}
-  ];
 
   // Keyboard Shortcuts
-  useHotkeys('cmd+k, ctrl+k', () => setShowSearch(!showSearch));
-  useHotkeys('cmd+/, ctrl+/', () => setShowShortcuts(!showShortcuts));
   useHotkeys('cmd+n, ctrl+n', () => clearChat());
   useHotkeys('cmd+b, ctrl+b', () => setShowSidebar(!showSidebar));
-  useHotkeys('cmd+s, ctrl+s', () => {
-    if (currentConversationId) {
-      saveDraft(currentConversationId, input);
-      toast.success('Draft saved!');
-    }
-  });
-  useHotkeys('cmd+enter, ctrl+enter', () => {
-    if (input.trim() && !isLoading) {
-      handleSubmit(new Event('submit') as any);
-    }
-  });
-  useHotkeys('escape', () => {
-    setShowSearch(false);
-    setShowShortcuts(false);
-    setShowPromptLibrary(false);
-    setShowExportMenu(false);
-    setShowSettings(false);
-  });
+  useHotkeys('cmd+k, ctrl+k', () => setShowSearch(!showSearch));
+  useHotkeys('cmd+s, ctrl+s', () => saveDraft(input));
+  useHotkeys('cmd+enter, ctrl+enter', () => handleSubmit());
+  useHotkeys('cmd+/, ctrl+/', () => setShowShortcuts(!showShortcuts));
 
-  // Initialize
   useEffect(() => {
     if (isLoaded && !isSignedIn) {
       router.push('/sign-in');
-    }
-  }, [isLoaded, isSignedIn, router]);
-
-  useEffect(() => {
-    try {
-      voiceInput.current = new VoiceInput();
-      voiceOutput.current = new VoiceOutput();
-    } catch (error) {
-      console.log('Voice features not available');
-    }
-    
-    const saved = localStorage.getItem('customInstructions');
-    if (saved) setCustomInstructions(saved);
-    
-    const savedTemp = localStorage.getItem('temperature');
-    if (savedTemp) setTemperature(parseFloat(savedTemp));
-    
-    const savedMaxTokens = localStorage.getItem('maxTokens');
-    if (savedMaxTokens) setMaxTokens(parseInt(savedMaxTokens));
-    
-    const savedAutoSave = localStorage.getItem('autoSave');
-    if (savedAutoSave) setAutoSave(savedAutoSave === 'true');
-    
-    const savedStreaming = localStorage.getItem('streamingEnabled');
-    if (savedStreaming) setStreamingEnabled(savedStreaming === 'true');
-  }, []);
-
-  useEffect(() => {
-    if (user) {
+    } else if (user) {
       loadConversations();
     }
-  }, [user]);
+  }, [isLoaded, isSignedIn, user, router]);
+
+  useEffect(() => {
+    const savedDraft = loadDraft();
+    if (savedDraft) {
+      setInput(savedDraft);
+    }
+  }, []);
 
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
 
-  // Auto-save draft
   useEffect(() => {
-    if (autoSave && currentConversationId) {
-      const timeout = setTimeout(() => {
-        saveDraft(currentConversationId, input);
-      }, 1000);
-      return () => clearTimeout(timeout);
-    }
-  }, [input, currentConversationId, autoSave]);
-
-  // Load draft when conversation changes
-  useEffect(() => {
-    if (currentConversationId) {
-      const draft = loadDraft(currentConversationId);
-      if (draft) {
-        setInput(draft);
-      }
-    }
-  }, [currentConversationId]);
-
-  // Update token count
-  useEffect(() => {
-    const inputTokens = estimateTokens(input);
-    const outputTokens = messages.reduce((acc, msg) => {
-      if (msg.role === 'assistant') {
-        return acc + estimateTokens(msg.content);
-      }
-      return acc;
-    }, 0);
-    
-    setTokenCount({ input: inputTokens, output: outputTokens });
-    setEstimatedCost(calculateCost(selectedModel, inputTokens, outputTokens));
-  }, [input, messages, selectedModel]);
-
-  // Generate suggested prompts
-  useEffect(() => {
-    if (messages.length > 0) {
-      const lastMessage = messages[messages.length - 1];
-      if (lastMessage.role === 'assistant') {
-        setSuggestedPrompts(generateSuggestedPrompts(lastMessage.content));
-      }
-    }
-  }, [messages]);
+    const tokens = estimateTokens(input);
+    setTokenCount(tokens);
+    const cost = calculateCost(tokens, selectedModel);
+    setEstimatedCost(cost);
+  }, [input, selectedModel]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -284,17 +175,17 @@ export default function ChatPage() {
 
     const userId = user.id.startsWith('user_') ? user.id : `user_${user.id}`;
     const title = firstMessage.slice(0, 50) + (firstMessage.length > 50 ? '...' : '');
-    
+
     try {
       const { data, error } = await supabase
         .from('conversations')
-        .insert({
+        .insert([{
           user_id: userId,
-          title: title,
+          title,
           model: selectedModel,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
-        })
+        }])
         .select()
         .single();
 
@@ -305,253 +196,126 @@ export default function ChatPage() {
     } catch (error) {
       console.error('Exception creating conversation:', error);
     }
-    
     return null;
   };
 
-  // FIX 1: Updated saveMessage function without 'model' field
-  const saveMessage = async (conversationId: string, role: string, content: string, type: string = 'text') => {
+  const saveMessage = async (conversationId: string, role: string, content: string) => {
     try {
-      const { error } = await supabase
+      await supabase
         .from('messages')
-        .insert({
+        .insert([{
           conversation_id: conversationId,
-          role: role,
-          content: content,
-          type: type,
+          role,
+          content,
+          model: role === 'assistant' ? selectedModel : null,
           created_at: new Date().toISOString()
-          // Removed 'model' field that was causing 400 error
-        });
-      
-      if (error) {
-        console.error('Error saving message:', error);
-      }
+        }]);
     } catch (error) {
       console.error('Exception saving message:', error);
     }
   };
 
-  const handleVoiceInput = async () => {
-    if (!voiceInput.current) return;
-    
-    if (isListening) {
-      voiceInput.current.stopListening();
-      setIsListening(false);
-    } else {
-      setIsListening(true);
-      try {
-        const transcript = await voiceInput.current.startListening();
-        setInput(input + ' ' + transcript);
-        setIsListening(false);
-        toast.success('Voice input captured!');
-      } catch (error) {
-        console.error('Voice input error:', error);
-        setIsListening(false);
-        toast.error('Voice input failed');
-      }
-    }
+  const clearChat = () => {
+    setMessages([]);
+    setCurrentConversationId(null);
+    setInput('');
+    toast.success('New chat started');
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const text = e.target?.result as string;
-      setInput(`[File: ${file.name}]\n\n${text.slice(0, 1000)}...`);
-      toast.success(`File ${file.name} loaded!`);
-    };
-    reader.readAsText(file);
-  };
-
-  const generateImage = async () => {
-    if (!imagePrompt.trim() || isGeneratingImage) return;
-    
-    setIsGeneratingImage(true);
-    toast.loading('Generating image...');
-    
+  const deleteConversation = async (id: string) => {
     try {
-      const response = await fetch('/api/image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: imagePrompt }),
-      });
+      await supabase
+        .from('messages')
+        .delete()
+        .eq('conversation_id', id);
+
+      await supabase
+        .from('conversations')
+        .delete()
+        .eq('id', id);
+
+      await loadConversations();
       
-      const data = await response.json();
-      if (data.imageUrl) {
-        const imageMessage = {
-          role: 'assistant',
-          content: `Generated image: "${imagePrompt}"`,
-          timestamp: new Date(),
-          type: 'image',
-          imageUrl: data.imageUrl
-        };
-        setMessages(prev => [...prev, imageMessage]);
-        setImagePrompt('');
-        setShowImageGen(false);
-        toast.dismiss();
-        toast.success('Image generated!');
-        
-        if (currentConversationId) {
-          await saveMessage(currentConversationId, 'assistant', data.imageUrl, 'image');
-        }
+      if (currentConversationId === id) {
+        clearChat();
       }
+      
+      toast.success('Conversation deleted');
     } catch (error) {
-      console.error('Image generation failed:', error);
-      toast.dismiss();
-      toast.error('Image generation failed');
-    } finally {
-      setIsGeneratingImage(false);
+      console.error('Exception deleting conversation:', error);
+      toast.error('Failed to delete conversation');
     }
   };
 
-  const sendMessage = async (messageText: string, isRegeneration: boolean = false) => {
-    if (!messageText.trim() || isLoading) return;
-    if (!user) {
-      toast.error('Please sign in to continue');
-      return;
-    }
+  const handleSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!input.trim() || isLoading) return;
 
-    let convId = currentConversationId;
-    
-    if (!convId) {
-      convId = await createNewConversation(messageText);
-      if (!convId) {
-        toast.error('Failed to create conversation');
-        return;
-      }
-      setCurrentConversationId(convId);
-    }
-
-    const userMessage = { 
-      role: 'user', 
-      content: messageText,
+    const userMessage = {
+      role: 'user',
+      content: input,
       timestamp: new Date(),
-      type: 'text'
+      type: 'text' as const
     };
-    
-    let updatedMessages = isRegeneration ? messages : [...messages, userMessage];
-    setMessages(updatedMessages);
+
+    setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsLoading(true);
     setIsTyping(true);
-    
-    if (!isRegeneration) {
-      await saveMessage(convId, 'user', messageText);
+
+    let conversationId = currentConversationId;
+    if (!conversationId) {
+      conversationId = await createNewConversation(input);
+      setCurrentConversationId(conversationId);
+    }
+
+    if (conversationId) {
+      await saveMessage(conversationId, 'user', userMessage.content);
     }
 
     try {
-      // Create abort controller for streaming
       abortControllerRef.current = new AbortController();
-      
-      const messagesWithContext = customInstructions 
-        ? [{ role: 'system', content: customInstructions }, ...updatedMessages]
-        : updatedMessages;
       
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          messages: messagesWithContext,
+        body: JSON.stringify({
+          messages: [...messages, userMessage],
           model: selectedModel,
           temperature,
           max_tokens: maxTokens,
-          stream: streamingEnabled
+          stream: streamingEnabled,
+          web_search: webSearchEnabled,
+          custom_instructions: customInstructions
         }),
         signal: abortControllerRef.current.signal
       });
 
       if (!response.ok) throw new Error('Failed to get response');
+
+      const data = await response.json();
       
-      if (streamingEnabled && response.body) {
-        // Handle streaming response
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let assistantMessage = { 
-          role: 'assistant', 
-          content: '',
-          timestamp: new Date(),
-          type: 'text',
-          model: selectedModel
-        };
-        
-        setMessages([...updatedMessages, assistantMessage]);
-        
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          
-          const chunk = decoder.decode(value);
-          assistantMessage.content += chunk;
-          
-          setMessages(prev => {
-            const newMessages = [...prev];
-            newMessages[newMessages.length - 1] = { ...assistantMessage };
-            return newMessages;
-          });
-        }
-        
-        await saveMessage(convId, 'assistant', assistantMessage.content);
-      } else {
-        // Handle non-streaming response
-        const data = await response.json();
-        setIsTyping(false);
-        
-        // FIX 2: Extract content properly from different response formats
-        let messageContent = '';
-        if (typeof data === 'string') {
-          messageContent = data;
-        } else if (data.content) {
-          messageContent = data.content;
-        } else if (data.message) {
-          messageContent = data.message;
-        } else if (data.text) {
-          messageContent = data.text;
-        } else {
-          // If none of the above, convert to string
-          messageContent = JSON.stringify(data);
-        }
-        
-        const assistantMessage = { 
-          role: 'assistant', 
-          content: messageContent,  // Now using the properly extracted content
-          timestamp: new Date(),
-          type: 'text',
-          model: selectedModel
-        };
-        
-        setMessages([...updatedMessages, assistantMessage]);
-        
-        if (voiceEnabled && voiceOutput.current) {
-          voiceOutput.current.speak(messageContent);
-        }
-        
-        await saveMessage(convId, 'assistant', messageContent);
+      const assistantMessage = {
+        role: 'assistant',
+        content: data.content,
+        timestamp: new Date(),
+        type: 'text' as const,
+        model: selectedModel
+      };
+
+      setMessages(prev => [...prev, assistantMessage]);
+      
+      if (conversationId) {
+        await saveMessage(conversationId, 'assistant', assistantMessage.content);
+        await supabase
+          .from('conversations')
+          .update({ updated_at: new Date().toISOString() })
+          .eq('id', conversationId);
       }
-      
-      await supabase
-        .from('conversations')
-        .update({ 
-          updated_at: new Date().toISOString(),
-          model: selectedModel 
-        })
-        .eq('id', convId);
-      
-      await loadConversations();
-      toast.success('Response received!');
     } catch (error: any) {
-      if (error.name === 'AbortError') {
-        toast.success('Response stopped');
-      } else {
-        console.error('Error:', error);
+      if (error.name !== 'AbortError') {
+        console.error('Chat error:', error);
         toast.error('Failed to get response');
-        setMessages([...updatedMessages, { 
-          role: 'assistant', 
-          content: 'An error occurred. Please try again.',
-          timestamp: new Date(),
-          type: 'text'
-        }]);
       }
     } finally {
       setIsLoading(false);
@@ -565,78 +329,53 @@ export default function ChatPage() {
       abortControllerRef.current.abort();
       setIsLoading(false);
       setIsTyping(false);
+      toast.success('Generation stopped');
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await sendMessage(input);
+  const regenerateLastMessage = async () => {
+    const lastUserMessage = [...messages].reverse().find(m => m.role === 'user');
+    if (lastUserMessage) {
+      const filteredMessages = messages.slice(0, messages.lastIndexOf(lastUserMessage) + 1);
+      setMessages(filteredMessages);
+      setInput(lastUserMessage.content);
+      await handleSubmit();
+    }
   };
 
-  const handleEditMessage = async (index: number, newContent: string) => {
+  const editMessage = async (index: number, newContent: string) => {
     const updatedMessages = [...messages];
-    updatedMessages[index] = { 
-      ...updatedMessages[index], 
+    updatedMessages[index] = {
+      ...updatedMessages[index],
       content: newContent,
-      edited: true 
+      edited: true
     };
     setMessages(updatedMessages);
     
-    // Regenerate response from this point
-    const messagesToSend = updatedMessages.slice(0, index + 1);
-    await sendMessage(newContent, true);
-  };
-
-  const handleRegenerateResponse = async (index: number) => {
-    const messagesToSend = messages.slice(0, index);
-    setMessages(messagesToSend);
-    const lastUserMessage = messagesToSend.reverse().find(m => m.role === 'user');
-    if (lastUserMessage) {
-      await sendMessage(lastUserMessage.content, true);
+    if (currentConversationId && updatedMessages[index].id) {
+      await supabase
+        .from('messages')
+        .update({ content: newContent, edited: true })
+        .eq('id', updatedMessages[index].id);
     }
   };
 
-  const handleDeleteMessage = (index: number) => {
-    const updatedMessages = messages.filter((_, i) => i !== index);
-    setMessages(updatedMessages);
-    toast.success('Message deleted');
-  };
+  const handleExport = (format: 'markdown' | 'json' | 'html') => {
+    const conversation = {
+      title: conversations.find(c => c.id === currentConversationId)?.title || 'Chat Export',
+      messages,
+      date: new Date().toISOString()
+    };
 
-  const clearChat = () => {
-    setMessages([]);
-    setCurrentConversationId(null);
-    setInput('');
-    setSuggestedPrompts([]);
-    toast.success('Chat cleared');
-  };
-
-  const deleteConversation = async (id: string) => {
-    await supabase
-      .from('conversations')
-      .delete()
-      .eq('id', id);
-    
-    if (id === currentConversationId) {
-      clearChat();
-    }
-    
-    await loadConversations();
-    toast.success('Conversation deleted');
-  };
-
-  const handleExport = (format: 'markdown' | 'json' | 'html' | 'copy') => {
     if (format === 'markdown') {
-      const markdown = exportToMarkdown(messages);
-      downloadFile(markdown, `corprex-chat-${Date.now()}.md`);
+      const markdown = exportToMarkdown(conversation);
+      downloadFile(markdown, `chat-${Date.now()}.md`, 'text/markdown');
     } else if (format === 'json') {
-      const json = exportToJSON(messages);
-      downloadFile(json, `corprex-chat-${Date.now()}.json`);
+      const json = exportToJSON(conversation);
+      downloadFile(json, `chat-${Date.now()}.json`, 'application/json');
     } else if (format === 'html') {
-      const html = exportAsHTML(messages);
-      downloadFile(html, `corprex-chat-${Date.now()}.html`);
-    } else if (format === 'copy') {
-      const text = messages.map(m => `${m.role}: ${m.content}`).join('\n\n');
-      copyToClipboardWithToast(text, 'Conversation copied!');
+      const html = exportAsHTML(conversation);
+      downloadFile(html, `chat-${Date.now()}.html`, 'text/html');
     }
     setShowExportMenu(false);
   };
@@ -708,27 +447,27 @@ export default function ChatPage() {
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span>New Chat</span>
-                  <kbd className="bg-[#2a2a2a] px-2 py-1 rounded">⌘/Ctrl + N</kbd>
+                  <kbd className="bg-[#2a2a2a] px-2 py-1 rounded">Cmd/Ctrl + N</kbd>
                 </div>
                 <div className="flex justify-between">
                   <span>Toggle Sidebar</span>
-                  <kbd className="bg-[#2a2a2a] px-2 py-1 rounded">⌘/Ctrl + B</kbd>
+                  <kbd className="bg-[#2a2a2a] px-2 py-1 rounded">Cmd/Ctrl + B</kbd>
                 </div>
                 <div className="flex justify-between">
                   <span>Search</span>
-                  <kbd className="bg-[#2a2a2a] px-2 py-1 rounded">⌘/Ctrl + K</kbd>
+                  <kbd className="bg-[#2a2a2a] px-2 py-1 rounded">Cmd/Ctrl + K</kbd>
                 </div>
                 <div className="flex justify-between">
                   <span>Save Draft</span>
-                  <kbd className="bg-[#2a2a2a] px-2 py-1 rounded">⌘/Ctrl + S</kbd>
+                  <kbd className="bg-[#2a2a2a] px-2 py-1 rounded">Cmd/Ctrl + S</kbd>
                 </div>
                 <div className="flex justify-between">
                   <span>Send Message</span>
-                  <kbd className="bg-[#2a2a2a] px-2 py-1 rounded">⌘/Ctrl + Enter</kbd>
+                  <kbd className="bg-[#2a2a2a] px-2 py-1 rounded">Cmd/Ctrl + Enter</kbd>
                 </div>
                 <div className="flex justify-between">
                   <span>Show Shortcuts</span>
-                  <kbd className="bg-[#2a2a2a] px-2 py-1 rounded">⌘/Ctrl + /</kbd>
+                  <kbd className="bg-[#2a2a2a] px-2 py-1 rounded">Cmd/Ctrl + /</kbd>
                 </div>
               </div>
             </motion.div>
@@ -864,15 +603,14 @@ export default function ChatPage() {
           )}
         </div>
         
-        {/* User Stats */}
-        <div className="p-4 border-t border-[#333333] text-xs text-gray-500">
-          <div className="flex justify-between mb-1">
-            <span>Tokens Used</span>
-            <span>{tokenCount.input + tokenCount.output}</span>
+        <div className="p-4 border-t border-[#333333]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-gray-500">Tokens</span>
+            <span className="text-xs">{tokenCount}</span>
           </div>
-          <div className="flex justify-between">
-            <span>Est. Cost</span>
-            <span>${estimatedCost.toFixed(4)}</span>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500">Est. Cost</span>
+            <span className="text-xs">${estimatedCost.toFixed(4)}</span>
           </div>
         </div>
       </motion.div>
@@ -898,8 +636,8 @@ export default function ChatPage() {
                   onChange={(e) => setSelectedModel(e.target.value)}
                   className="appearance-none px-4 py-2 bg-[#1a1a1a] border border-[#333333] text-white focus:outline-none focus:border-white pr-8 cursor-pointer"
                 >
-                  {Object.entries(AI_MODELS).map(([key, model]) => (
-                    <option key={key} value={key}>{model.name}</option>
+                  {AI_MODELS.map(model => (
+                    <option key={model.id} value={model.id}>{model.name}</option>
                   ))}
                 </select>
                 <svg className="w-4 h-4 absolute right-2 top-3 pointer-events-none text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -918,15 +656,14 @@ export default function ChatPage() {
                 onClick={() => setShowImageGen(!showImageGen)}
                 className="px-3 py-2 border border-[#333333] hover:bg-[#1a1a1a] transition-colors text-sm"
               >
-                IMAGE
+                IMAGE GEN
               </button>
             </div>
             
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center space-x-2">
               <button
                 onClick={() => setShowSearch(!showSearch)}
-                className="text-gray-400 hover:text-white"
-                title="Search (⌘K)"
+                className="p-2 text-gray-400 hover:text-white"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -934,433 +671,149 @@ export default function ChatPage() {
               </button>
               
               <button
-                onClick={() => setShowSettings(!showSettings)}
-                className="text-gray-400 hover:text-white"
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                className="p-2 text-gray-400 hover:text-white relative"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                
+                {showExportMenu && (
+                  <div className="absolute right-0 mt-2 w-48 bg-[#1a1a1a] border border-[#333333] rounded shadow-lg">
+                    <button
+                      onClick={() => handleExport('markdown')}
+                      className="block w-full text-left px-4 py-2 hover:bg-[#2a2a2a]"
+                    >
+                      Export as Markdown
+                    </button>
+                    <button
+                      onClick={() => handleExport('json')}
+                      className="block w-full text-left px-4 py-2 hover:bg-[#2a2a2a]"
+                    >
+                      Export as JSON
+                    </button>
+                    <button
+                      onClick={() => handleExport('html')}
+                      className="block w-full text-left px-4 py-2 hover:bg-[#2a2a2a]"
+                    >
+                      Export as HTML
+                    </button>
+                  </div>
+                )}
+              </button>
+              
+              <button
+                onClick={() => setShowShortcuts(true)}
+                className="p-2 text-gray-400 hover:text-white"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </button>
               
               <button
                 onClick={() => router.push('/analytics')}
-                className="text-gray-400 hover:text-white"
+                className="p-2 text-gray-400 hover:text-white"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                 </svg>
               </button>
               
-              <div className="relative">
-                <button
-                  onClick={() => setShowExportMenu(!showExportMenu)}
-                  className="text-gray-400 hover:text-white"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                  </svg>
-                </button>
-                
-                {showExportMenu && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="absolute right-0 mt-2 w-48 bg-[#1a1a1a] border border-[#333333] shadow-lg"
-                  >
-                    <button
-                      onClick={() => handleExport('markdown')}
-                      className="block w-full text-left px-4 py-2 hover:bg-[#2a2a2a] text-sm"
-                    >
-                      Export as Markdown
-                    </button>
-                    <button
-                      onClick={() => handleExport('json')}
-                      className="block w-full text-left px-4 py-2 hover:bg-[#2a2a2a] text-sm"
-                    >
-                      Export as JSON
-                    </button>
-                    <button
-                      onClick={() => handleExport('html')}
-                      className="block w-full text-left px-4 py-2 hover:bg-[#2a2a2a] text-sm"
-                    >
-                      Export as HTML
-                    </button>
-                    <button
-                      onClick={() => handleExport('copy')}
-                      className="block w-full text-left px-4 py-2 hover:bg-[#2a2a2a] text-sm"
-                    >
-                      Copy to Clipboard
-                    </button>
-                  </motion.div>
-                )}
-              </div>
-              
-              <button
-                onClick={() => setShowShortcuts(true)}
-                className="text-gray-400 hover:text-white"
-                title="Keyboard Shortcuts (⌘/)"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
-                </svg>
-              </button>
-              
-              <UserButton 
-                appearance={{
-                  elements: {
-                    userButtonAvatarBox: "w-8 h-8",
-                  }
-                }}
-              />
+              <UserButton afterSignOutUrl="/" />
             </div>
           </div>
-
-          {/* Search Bar */}
-          <AnimatePresence>
-            {showSearch && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="mt-3"
-              >
-                <input
-                  type="text"
-                  placeholder="Search in messages..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full px-4 py-2 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white"
-                  autoFocus
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
+          
+          {showSearch && (
+            <div className="mt-3">
+              <input
+                type="text"
+                placeholder="Search messages..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white"
+              />
+            </div>
+          )}
         </header>
 
-        {/* Settings Panel */}
-        <AnimatePresence>
-          {showSettings && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="bg-[#0a0a0a] border-b border-[#333333] p-4"
-            >
-              <div className="max-w-4xl mx-auto space-y-4">
-                <div>
-                  <h3 className="text-sm font-medium mb-2">Custom Instructions</h3>
-                  <textarea
-                    value={customInstructions}
-                    onChange={(e) => {
-                      setCustomInstructions(e.target.value);
-                      localStorage.setItem('customInstructions', e.target.value);
-                    }}
-                    placeholder="You are a helpful assistant..."
-                    className="w-full px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white resize-none"
-                    rows={3}
-                  />
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label className="text-sm text-gray-400 block mb-1">Temperature: {temperature}</label>
-                    <input
-                      type="range"
-                      min="0"
-                      max="2"
-                      step="0.1"
-                      value={temperature}
-                      onChange={(e) => {
-                        setTemperature(parseFloat(e.target.value));
-                        localStorage.setItem('temperature', e.target.value);
-                      }}
-                      className="w-full"
-                    />
-                  </div>
-                  
-                  <div>
-                    <label className="text-sm text-gray-400 block mb-1">Max Tokens: {maxTokens}</label>
-                    <input
-                      type="range"
-                      min="256"
-                      max="4096"
-                      step="256"
-                      value={maxTokens}
-                      onChange={(e) => {
-                        setMaxTokens(parseInt(e.target.value));
-                        localStorage.setItem('maxTokens', e.target.value);
-                      }}
-                      className="w-full"
-                    />
-                  </div>
-                  
-                  <div className="space-y-2">
-                    <label className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        checked={streamingEnabled}
-                        onChange={(e) => {
-                          setStreamingEnabled(e.target.checked);
-                          localStorage.setItem('streamingEnabled', String(e.target.checked));
-                        }}
-                        className="rounded"
-                      />
-                      <span className="text-sm">Streaming Responses</span>
-                    </label>
-                    
-                    <label className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        checked={autoSave}
-                        onChange={(e) => {
-                          setAutoSave(e.target.checked);
-                          localStorage.setItem('autoSave', String(e.target.checked));
-                        }}
-                        className="rounded"
-                      />
-                      <span className="text-sm">Auto-save Drafts</span>
-                    </label>
-                    
-                    <label className="flex items-center space-x-2">
-                      <input
-                        type="checkbox"
-                        checked={voiceEnabled}
-                        onChange={(e) => setVoiceEnabled(e.target.checked)}
-                        className="rounded"
-                      />
-                      <span className="text-sm">Voice Output</span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Prompt Library */}
-        <AnimatePresence>
-          {showPromptLibrary && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="bg-[#0a0a0a] border-b border-[#333333] p-4"
-            >
-              <div className="max-w-4xl mx-auto">
-                <h3 className="text-sm font-medium mb-3">Prompt Library</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {promptLibrary.map((category) => (
-                    <div key={category.category}>
-                      <h4 className="text-xs text-gray-500 uppercase tracking-wider mb-2">{category.category}</h4>
-                      <div className="space-y-1">
-                        {category.prompts.map((prompt, index) => (
-                          <button
-                            key={index}
-                            onClick={() => {
-                              setInput(prompt);
-                              setShowPromptLibrary(false);
-                            }}
-                            className="block w-full text-left text-xs px-2 py-1 bg-[#1a1a1a] hover:bg-[#2a2a2a] border border-[#333333] truncate"
-                          >
-                            {prompt}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Image Generation Panel */}
-        <AnimatePresence>
-          {showImageGen && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              className="bg-[#0a0a0a] border-b border-[#333333] p-4"
-            >
-              <div className="max-w-4xl mx-auto flex space-x-2">
-                <input
-                  type="text"
-                  value={imagePrompt}
-                  onChange={(e) => setImagePrompt(e.target.value)}
-                  placeholder="Describe the image you want to generate..."
-                  className="flex-1 px-3 py-2 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white"
-                />
-                <button
-                  onClick={generateImage}
-                  disabled={isGeneratingImage}
-                  className="px-4 py-2 bg-white text-black hover:bg-gray-200 transition-colors disabled:opacity-50"
-                >
-                  {isGeneratingImage ? 'Generating...' : 'Generate'}
-                </button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
         {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto px-4 py-6">
+        <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4">
           {searchedMessages.length === 0 ? (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="max-w-3xl mx-auto text-center py-12"
-            >
-              <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
-                CORPREX AI
-              </h1>
-              <p className="text-gray-400 mb-8">Your Advanced AI Assistant</p>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
-                {[
-                  { icon: '💡', title: 'Creative Writing', desc: 'Stories, scripts, and content' },
-                  { icon: '🔬', title: 'Analysis', desc: 'Data insights and research' },
-                  { icon: '💻', title: 'Coding', desc: 'Debug and write code' },
-                  { icon: '🎓', title: 'Learning', desc: 'Explanations and tutorials' }
-                ].map((item, index) => (
-                  <motion.button
-                    key={index}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => setShowPromptLibrary(true)}
-                    className="text-left p-4 bg-[#0a0a0a] border border-[#333333] hover:bg-[#1a1a1a] transition-colors group"
-                  >
-                    <div className="text-2xl mb-2">{item.icon}</div>
-                    <div className="text-sm font-medium">{item.title}</div>
-                    <div className="text-xs text-gray-500">{item.desc}</div>
-                  </motion.button>
-                ))}
-              </div>
-              
-              <div className="mt-8 text-xs text-gray-600">
-                Press <kbd className="bg-[#2a2a2a] px-2 py-1 rounded">⌘/</kbd> for keyboard shortcuts
-              </div>
-            </motion.div>
+            <div className="flex flex-col items-center justify-center h-full text-gray-500">
+              <svg className="w-16 h-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              <h2 className="text-xl mb-2">Start a conversation</h2>
+              <p className="text-sm">Ask me anything or choose a suggested prompt</p>
+            </div>
           ) : (
-            <div className="max-w-3xl mx-auto">
+            <div className="max-w-4xl mx-auto">
               {searchedMessages.map((message, index) => (
                 <MessageBlock
                   key={index}
                   message={message}
-                  onEdit={(content) => handleEditMessage(index, content)}
-                  onRegenerate={() => handleRegenerateResponse(index)}
-                  onDelete={() => handleDeleteMessage(index)}
+                  onEdit={(newContent: string) => editMessage(index, newContent)}
+                  onRegenerate={index === messages.length - 1 ? regenerateLastMessage : undefined}
+                  onDelete={() => {
+                    const filtered = messages.filter((_, i) => i !== index);
+                    setMessages(filtered);
+                  }}
                 />
               ))}
-              
               {isTyping && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="mb-6"
-                >
-                  <div className="inline-block">
-                    <div className="px-4 py-3 bg-[#1a1a1a] border border-[#333333]">
-                      <div className="flex space-x-2">
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                      </div>
-                    </div>
+                <div className="mb-6">
+                  <div className="flex items-center space-x-2 text-gray-500">
+                    <span>CORPREX AI is typing</span>
+                    <motion.div className="flex space-x-1">
+                      {[0, 1, 2].map((i) => (
+                        <motion.div
+                          key={i}
+                          className="w-2 h-2 bg-gray-500 rounded-full"
+                          animate={{ y: [0, -5, 0] }}
+                          transition={{ duration: 0.5, delay: i * 0.1, repeat: Infinity }}
+                        />
+                      ))}
+                    </motion.div>
                   </div>
-                </motion.div>
+                </div>
               )}
-              
               <div ref={messagesEndRef} />
             </div>
-          )}
-          
-          {/* Suggested Prompts */}
-          {suggestedPrompts.length > 0 && messages.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="max-w-3xl mx-auto mt-4"
-            >
-              <div className="text-xs text-gray-500 mb-2">Suggested follow-ups:</div>
-              <div className="flex flex-wrap gap-2">
-                {suggestedPrompts.map((prompt, index) => (
-                  <button
-                    key={index}
-                    onClick={() => setInput(prompt)}
-                    className="text-xs px-3 py-1 bg-[#1a1a1a] hover:bg-[#2a2a2a] border border-[#333333] rounded-full"
-                  >
-                    {prompt}
-                  </button>
-                ))}
-              </div>
-            </motion.div>
           )}
         </div>
 
         {/* Input Area */}
-        <div className="border-t border-[#333333] p-4 bg-black">
-          <form onSubmit={handleSubmit} className="max-w-3xl mx-auto">
-            <div className="flex space-x-2 mb-2">
-              <button
-                type="button"
-                onClick={handleVoiceInput}
-                className={`p-2 border ${isListening ? 'bg-red-600 border-red-600' : 'border-[#333333]'} hover:bg-[#1a1a1a] transition-colors`}
-                disabled={isLoading}
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                </svg>
-              </button>
-              
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="p-2 border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
-                disabled={isLoading}
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
-                </svg>
-              </button>
-              
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".txt,.md,.json,.csv,.pdf"
-                onChange={handleFileUpload}
-                className="hidden"
+        <div className="border-t border-[#333333] p-4">
+          <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
+            <div className="flex space-x-2">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit();
+                  }
+                }}
+                placeholder="Type your message..."
+                className="flex-1 px-4 py-3 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white resize-none"
+                rows={1}
+                style={{ minHeight: '48px', maxHeight: '200px' }}
               />
               
-              <div className="flex-1 relative">
-                <textarea
-                  ref={textareaRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="Type your message... (⌘+Enter to send)"
-                  className="w-full px-4 py-3 bg-[#1a1a1a] border border-[#333333] text-white placeholder-gray-500 focus:outline-none focus:border-white resize-none pr-12"
-                  disabled={isLoading}
-                  rows={1}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                      e.preventDefault();
-                      handleSubmit(e);
-                    }
-                  }}
-                  style={{
-                    minHeight: '48px',
-                    maxHeight: '200px',
-                    height: 'auto'
-                  }}
-                />
-                
-                {autoSave && input && (
-                  <div className="absolute right-2 bottom-2 text-xs text-gray-600">
-                    Draft saved
-                  </div>
-                )}
-              </div>
+              {voiceEnabled && (
+                <button
+                  type="button"
+                  onClick={() => setIsListening(!isListening)}
+                  className={`px-4 py-3 border ${isListening ? 'bg-red-600 border-red-600' : 'border-[#333333]'} hover:bg-[#1a1a1a] transition-colors`}
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                  </svg>
+                </button>
+              )}
               
               {isLoading ? (
                 <button
@@ -1439,26 +892,23 @@ function MessageBlock({ message, onEdit, onRegenerate, onDelete }: any) {
             : 'bg-[#1a1a1a] text-white border border-[#333333]'
         }`}>
           {isEditing ? (
-            <div className="space-y-2">
+            <div>
               <textarea
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
-                className="w-full p-2 bg-[#0a0a0a] border border-[#333333] text-white rounded focus:outline-none focus:border-white"
+                className="w-full p-2 bg-transparent border border-[#333333] focus:outline-none"
                 rows={4}
               />
-              <div className="flex space-x-2">
+              <div className="flex space-x-2 mt-2">
                 <button
                   onClick={handleSaveEdit}
-                  className="px-3 py-1 bg-white text-black hover:bg-gray-200 text-sm"
+                  className="px-3 py-1 bg-white text-black text-sm"
                 >
                   Save
                 </button>
                 <button
-                  onClick={() => {
-                    setIsEditing(false);
-                    setEditContent(message.content);
-                  }}
-                  className="px-3 py-1 border border-[#333333] hover:bg-[#1a1a1a] text-sm"
+                  onClick={() => setIsEditing(false)}
+                  className="px-3 py-1 border border-[#333333] text-sm"
                 >
                   Cancel
                 </button>
@@ -1466,98 +916,75 @@ function MessageBlock({ message, onEdit, onRegenerate, onDelete }: any) {
             </div>
           ) : (
             <>
-              {message.type === 'image' && message.imageUrl ? (
+              {message.type === 'image' ? (
                 <img src={message.imageUrl} alt="Generated" className="max-w-full h-auto" />
               ) : (
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm, remarkMath]}
                   rehypePlugins={[rehypeKatex]}
                   components={{
-                    code({ node, inline, className, children, ...props }: any) {
+                    code({node, className, children, ...props}: any) {
                       const match = /language-(\w+)/.exec(className || '');
-                      return !inline && match ? (
-                        <div className="relative group my-2">
-                          <button
-                            onClick={() => copyToClipboardWithToast(String(children).replace(/\n$/, ''), 'Code copied!')}
-                            className="absolute right-2 top-2 text-xs bg-[#2a2a2a] hover:bg-[#3a3a3a] text-gray-400 px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            Copy
-                          </button>
-                          <SyntaxHighlighter
-                            language={match[1]}
-                            style={vscDarkPlus}
-                            customStyle={{
-                              margin: 0,
-                              padding: '1rem',
-                              fontSize: '0.875rem',
-                            }}
-                          >
-                            {String(children).replace(/\n$/, '')}
-                          </SyntaxHighlighter>
-                        </div>
+                      return match ? (
+                        <SyntaxHighlighter
+                          style={vscDarkPlus}
+                          language={match[1]}
+                          PreTag="div"
+                        >
+                          {String(children).replace(/\n$/, '')}
+                        </SyntaxHighlighter>
                       ) : (
-                        <code className="bg-[#2a2a2a] px-1 py-0.5 rounded text-sm" {...props}>
+                        <code className={className} {...props}>
                           {children}
                         </code>
                       );
-                    },
+                    }
                   }}
                 >
                   {message.content}
                 </ReactMarkdown>
               )}
-            </>
-          )}
-
-          {/* Action Buttons */}
-          <AnimatePresence>
-            {isHovered && !isEditing && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute -bottom-8 left-0 flex space-x-2"
-              >
-                <button
-                  onClick={() => copyToClipboardWithToast(message.content)}
-                  className="p-1 bg-[#2a2a2a] hover:bg-[#3a3a3a] rounded text-xs text-gray-400"
-                  title="Copy"
-                >
-                  Copy
-                </button>
-                
-                {message.role === 'user' && onEdit && (
+              
+              {isHovered && (
+                <div className="absolute top-0 right-0 -mt-8 flex space-x-1">
+                  <button
+                    onClick={() => copyToClipboardWithToast(message.content)}
+                    className="p-1 bg-[#2a2a2a] border border-[#333333] hover:bg-[#3a3a3a]"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                  </button>
                   <button
                     onClick={() => setIsEditing(true)}
-                    className="p-1 bg-[#2a2a2a] hover:bg-[#3a3a3a] rounded text-xs text-gray-400"
-                    title="Edit"
+                    className="p-1 bg-[#2a2a2a] border border-[#333333] hover:bg-[#3a3a3a]"
                   >
-                    Edit
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
                   </button>
-                )}
-                
-                {message.role === 'assistant' && onRegenerate && (
-                  <button
-                    onClick={onRegenerate}
-                    className="p-1 bg-[#2a2a2a] hover:bg-[#3a3a3a] rounded text-xs text-gray-400"
-                    title="Regenerate"
-                  >
-                    Regenerate
-                  </button>
-                )}
-                
-                {onDelete && (
+                  {onRegenerate && (
+                    <button
+                      onClick={onRegenerate}
+                      className="p-1 bg-[#2a2a2a] border border-[#333333] hover:bg-[#3a3a3a]"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                    </button>
+                  )}
                   <button
                     onClick={onDelete}
-                    className="p-1 bg-[#2a2a2a] hover:bg-red-600 rounded text-xs text-gray-400"
-                    title="Delete"
+                    className="p-1 bg-[#2a2a2a] border border-[#333333] hover:bg-red-600"
                   >
-                    Delete
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
                   </button>
-                )}
-              </motion.div>
-            )}
-          </AnimatePresence>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
     </motion.div>
