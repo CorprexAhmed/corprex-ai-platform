@@ -422,9 +422,17 @@ export default function ChatPage() {
         signal: abortControllerRef.current.signal
       });
       
-      if (!response.ok) throw new Error('Failed to get response');
-      
       const data = await response.json();
+      
+      // FIXED: Check for errors in the response
+      if (!response.ok) {
+        const errorMessage = data.error || 'Failed to get response';
+        console.error('API Error:', errorMessage);
+        toast.error(errorMessage);
+        setIsLoading(false);
+        setIsTyping(false);
+        return;
+      }
       
       if (data.content) {
         const assistantMessage = {
@@ -465,7 +473,7 @@ export default function ChatPage() {
         toast.success('Generation stopped');
       } else {
         console.error('Chat error:', error);
-        toast.error('Failed to get response');
+        toast.error('Failed to get response. Please check your API keys.');
       }
     } finally {
       setIsLoading(false);
