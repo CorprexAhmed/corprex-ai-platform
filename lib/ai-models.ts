@@ -20,9 +20,42 @@ export const AI_MODELS = [
     description: 'Advanced analysis',
     icon: ''
   }
-  // Removed Gemini and Mixtral as they're not working
+  // Temporarily hidden from UI - uncomment to re-enable
+  // { 
+  //   id: 'gemini-1.5-flash', 
+  //   name: 'Gemini', 
+  //   provider: 'Google',
+  //   description: 'Multimodal AI',
+  //   icon: ''
+  // },
+  // { 
+  //   id: 'mixtral-8x7b', 
+  //   name: 'Mixtral', 
+  //   provider: 'Groq',
+  //   description: 'Open source',
+  //   icon: ''
+  // }
 ];
 
 export function getModelConfig(modelId: string) {
-  return AI_MODELS.find(m => m.id === modelId) || AI_MODELS[0];
+  // Include hidden models in the lookup for backend compatibility
+  const allModels = [
+    ...AI_MODELS,
+    // Hidden models still accessible by backend
+    { 
+      id: 'gemini-1.5-flash', 
+      name: 'Gemini', 
+      provider: 'Google',
+      description: 'Multimodal AI',
+      icon: ''
+    },
+    { 
+      id: 'mixtral-8x7b', 
+      name: 'Mixtral', 
+      provider: 'Groq',
+      description: 'Open source',
+      icon: ''
+    }
+  ];
+  return allModels.find(m => m.id === modelId) || AI_MODELS[0];
 }
