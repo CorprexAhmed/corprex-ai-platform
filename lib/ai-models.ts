@@ -14,8 +14,8 @@ export const AI_MODELS = [
     icon: ''
   },
   { 
-    id: 'claude-3-5-sonnet', 
-    name: 'Claude 3.5', 
+    id: 'claude-3-5-sonnet-20241022', 
+    name: 'Claude 3.5 Sonnet', 
     provider: 'Anthropic',
     description: 'Advanced analysis',
     icon: ''
