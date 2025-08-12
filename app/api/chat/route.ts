@@ -49,7 +49,7 @@ export async function POST(req: Request) {
         console.error('OpenAI API error:', error);
         responseContent = `Error: ${error.message}. Please check your OpenAI API key.`;
       }
-    } else if (model.startsWith('claude')) {
+    } else if (model.includes('claude')) {
       // Anthropic Claude models
       if (!anthropic) {
         return NextResponse.json({
@@ -58,8 +58,11 @@ export async function POST(req: Request) {
       }
 
       try {
+        // Use the correct Claude model ID
+        const claudeModel = 'claude-3-5-sonnet-20241022';
+        
         const message = await anthropic.messages.create({
-          model: model,
+          model: claudeModel,
           max_tokens: max_tokens,
           temperature: temperature,
           messages: messages.filter((m: any) => m.role !== 'system').map((m: any) => ({
