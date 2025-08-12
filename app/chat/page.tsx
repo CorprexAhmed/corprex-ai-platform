@@ -14,7 +14,8 @@ import {
   searchMessages,
   generateSuggestedPrompts,
   formatRelativeTime,
-  exportAsHTML
+  exportAsHTML,
+  generateConversationSummary
 } from '@/lib/chat-utils';
 import { exportToMarkdown, exportToJSON, downloadFile } from '@/lib/export-utils';
 import { VoiceInput, VoiceOutput } from '@/lib/voice-utils';
@@ -94,6 +95,13 @@ export default function ChatPage() {
   const voiceInputRef = useRef<VoiceInput | null>(null);
   const voiceOutputRef = useRef<VoiceOutput | null>(null);
   
+  // Helper function to get consistent user ID
+  const getUserId = useCallback(() => {
+    if (!user) return null;
+    // Always use the raw user.id from Clerk
+    return user.id;
+  }, [user]);
+  
   // Initialize voice instances
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -158,13 +166,14 @@ export default function ChatPage() {
   });
   
   const loadConversations = async () => {
-    if (!user) return;
+    const userId = getUserId();
+    if (!userId) return;
     
     try {
       const { data, error } = await supabase
         .from('conversations')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('user_id', userId)
         .order('updated_at', { ascending: false });
       
       if (error) {
@@ -194,14 +203,22 @@ export default function ChatPage() {
       }
       
       if (data) {
-        setMessages(data.map(msg => ({
+        const formattedMessages = data.map(msg => ({
           id: msg.id,
           role: msg.role,
           content: msg.content,
           timestamp: new Date(msg.created_at),
+          type: msg.type || 'text',
+          edited: msg.edited || false,
           model: msg.model
-        })));
+        }));
+        setMessages(formattedMessages);
         setCurrentConversationId(conversationId);
+        
+        const conv = conversations.find(c => c.id === conversationId);
+        if (conv && conv.model) {
+          setSelectedModel(conv.model);
+        }
       }
     } catch (error) {
       console.error('Exception loading conversation:', error);
@@ -209,16 +226,18 @@ export default function ChatPage() {
   };
   
   const createNewConversation = async (firstMessage: string) => {
-    if (!user) return null;
+    const userId = getUserId();
+    if (!userId) return null;
     
-    const title = generateConversationSummary([{ role: 'user', content: firstMessage }]);
+    const title = firstMessage.slice(0, 50) + (firstMessage.length > 50 ? '...' : '');
     
     try {
       const { data, error } = await supabase
         .from('conversations')
         .insert([{
-          user_id: user.id,
+          user_id: userId,
           title,
+          model: selectedModel,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         }])
@@ -230,16 +249,20 @@ export default function ChatPage() {
         return null;
       }
       
-      await loadConversations();
-      return data?.id || null;
+      if (data) {
+        await loadConversations();
+        return data.id;
+      }
     } catch (error) {
       console.error('Exception creating conversation:', error);
-      return null;
     }
+    return null;
   };
   
-  const updateConversationTitle = async (conversationId: string, title: string) => {
+  const updateConversationTitle = async (conversationId: string, messages: any[]) => {
     try {
+      const title = generateConversationSummary(messages);
+      
       await supabase
         .from('conversations')
         .update({ 
@@ -255,14 +278,15 @@ export default function ChatPage() {
   };
   
   const saveMessage = async (conversationId: string, role: string, content: string) => {
-    if (!user) return null;
+    const userId = getUserId();
+    if (!userId) return null;
     
     try {
       const { data, error } = await supabase
         .from('messages')
         .insert([{
           conversation_id: conversationId,
-          user_id: user.id,
+          user_id: userId,  // Add user_id here
           role,
           content,
           model: role === 'assistant' ? selectedModel : null,
@@ -273,7 +297,9 @@ export default function ChatPage() {
       
       if (error) {
         console.error('Error saving message:', error);
+        return null;
       }
+      
       return data;
     } catch (error) {
       console.error('Exception saving message:', error);
@@ -291,11 +317,13 @@ export default function ChatPage() {
   
   const deleteConversation = async (id: string) => {
     try {
+      // Delete messages first
       await supabase
         .from('messages')
         .delete()
         .eq('conversation_id', id);
       
+      // Then delete conversation
       await supabase
         .from('conversations')
         .delete()
@@ -333,9 +361,10 @@ export default function ChatPage() {
     e?.preventDefault();
     if (!input.trim() || isLoading) return;
     
+    const userMessageContent = input.trim();
     const userMessage = {
       role: 'user',
-      content: input,
+      content: userMessageContent,
       timestamp: new Date(),
       type: 'text' as const,
       fileAttachment: attachedFile ? {
@@ -345,6 +374,7 @@ export default function ChatPage() {
       } : undefined
     };
     
+    // Update UI immediately
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setAttachedFile(null);
@@ -355,13 +385,20 @@ export default function ChatPage() {
     
     // Create new conversation if needed
     if (!conversationId) {
-      conversationId = await createNewConversation(input);
+      conversationId = await createNewConversation(userMessageContent);
+      if (!conversationId) {
+        toast.error('Failed to create conversation');
+        setIsLoading(false);
+        setIsTyping(false);
+        return;
+      }
       setCurrentConversationId(conversationId);
     }
     
-    // Save user message
-    if (conversationId) {
-      await saveMessage(conversationId, 'user', userMessage.content);
+    // Save user message to database
+    const savedUserMessage = await saveMessage(conversationId, 'user', userMessageContent);
+    if (!savedUserMessage) {
+      console.error('Failed to save user message');
     }
     
     try {
@@ -389,24 +426,39 @@ export default function ChatPage() {
       
       const data = await response.json();
       
-      const assistantMessage = {
-        role: 'assistant',
-        content: data.content,
-        timestamp: new Date(),
-        model: selectedModel
-      };
-      
-      setMessages(prev => [...prev, assistantMessage]);
-      
-      // Save assistant message
-      if (conversationId) {
-        await saveMessage(conversationId, 'assistant', assistantMessage.content);
-        await updateConversationTitle(conversationId, generateConversationSummary([...messages, userMessage, assistantMessage]));
-      }
-      
-      // Voice output if enabled
-      if (voiceOutputEnabled && voiceOutputRef.current) {
-        voiceOutputRef.current.speak(assistantMessage.content);
+      if (data.content) {
+        const assistantMessage = {
+          role: 'assistant',
+          content: data.content,
+          timestamp: new Date(),
+          model: selectedModel
+        };
+        
+        // Update UI with assistant message
+        setMessages(prev => [...prev, assistantMessage]);
+        
+        // Save assistant message to database
+        const savedAssistantMessage = await saveMessage(conversationId, 'assistant', data.content);
+        if (!savedAssistantMessage) {
+          console.error('Failed to save assistant message');
+        }
+        
+        // Update conversation title and timestamp
+        await updateConversationTitle(conversationId, [...messages, userMessage, assistantMessage]);
+        
+        // Update conversation's updated_at timestamp
+        await supabase
+          .from('conversations')
+          .update({ updated_at: new Date().toISOString() })
+          .eq('id', conversationId);
+        
+        // Reload conversations to update sidebar
+        await loadConversations();
+        
+        // Voice output if enabled
+        if (voiceOutputEnabled && voiceOutputRef.current) {
+          voiceOutputRef.current.speak(data.content);
+        }
       }
     } catch (error: any) {
       if (error.name === 'AbortError') {
