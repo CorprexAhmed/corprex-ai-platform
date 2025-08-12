@@ -45,6 +45,11 @@ export default function ChatPage() {
     imageUrl?: string;
     edited?: boolean;
     model?: string;
+    fileAttachment?: {
+      name: string;
+      type: string;
+      url: string;
+    };
   }>>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -62,6 +67,7 @@ export default function ChatPage() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showPromptLibrary, setShowPromptLibrary] = useState(false);
   const [showImageGen, setShowImageGen] = useState(false);
+  const [attachedFile, setAttachedFile] = useState<File | null>(null);
   
   // Features State
   const [isListening, setIsListening] = useState(false);
@@ -75,10 +81,12 @@ export default function ChatPage() {
   const [estimatedCost, setEstimatedCost] = useState(0);
   const [tokenCount, setTokenCount] = useState(0);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [suggestedPrompts, setSuggestedPrompts] = useState<string[]>([]);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // Keyboard Shortcuts
@@ -115,6 +123,14 @@ export default function ChatPage() {
     setEstimatedCost(cost);
   }, [input, selectedModel]);
 
+  // Generate suggested prompts
+  useEffect(() => {
+    if (messages.length === 0) {
+      const prompts = generateSuggestedPrompts();
+      setSuggestedPrompts(prompts);
+    }
+  }, [messages.length]);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
@@ -133,6 +149,8 @@ export default function ChatPage() {
 
       if (!error && data) {
         setConversations(data);
+      } else if (error) {
+        console.error('Error loading conversations:', error);
       }
     } catch (error) {
       console.error('Exception loading conversations:', error);
@@ -192,6 +210,8 @@ export default function ChatPage() {
       if (!error && data) {
         await loadConversations();
         return data.id;
+      } else if (error) {
+        console.error('Error creating conversation:', error);
       }
     } catch (error) {
       console.error('Exception creating conversation:', error);
@@ -201,7 +221,7 @@ export default function ChatPage() {
 
   const saveMessage = async (conversationId: string, role: string, content: string) => {
     try {
-      await supabase
+      const { data, error } = await supabase
         .from('messages')
         .insert([{
           conversation_id: conversationId,
@@ -209,9 +229,17 @@ export default function ChatPage() {
           content,
           model: role === 'assistant' ? selectedModel : null,
           created_at: new Date().toISOString()
-        }]);
+        }])
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error saving message:', error);
+      }
+      return data;
     } catch (error) {
       console.error('Exception saving message:', error);
+      return null;
     }
   };
 
@@ -219,6 +247,7 @@ export default function ChatPage() {
     setMessages([]);
     setCurrentConversationId(null);
     setInput('');
+    setAttachedFile(null);
     toast.success('New chat started');
   };
 
@@ -247,6 +276,21 @@ export default function ChatPage() {
     }
   };
 
+  const handleFileAttachment = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setAttachedFile(file);
+      toast.success(`File attached: ${file.name}`);
+    }
+  };
+
+  const removeAttachment = () => {
+    setAttachedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!input.trim() || isLoading) return;
@@ -255,20 +299,29 @@ export default function ChatPage() {
       role: 'user',
       content: input,
       timestamp: new Date(),
-      type: 'text' as const
+      type: 'text' as const,
+      fileAttachment: attachedFile ? {
+        name: attachedFile.name,
+        type: attachedFile.type,
+        url: URL.createObjectURL(attachedFile)
+      } : undefined
     };
 
     setMessages(prev => [...prev, userMessage]);
     setInput('');
+    setAttachedFile(null);
     setIsLoading(true);
     setIsTyping(true);
 
     let conversationId = currentConversationId;
+    
+    // Create new conversation if needed
     if (!conversationId) {
       conversationId = await createNewConversation(input);
       setCurrentConversationId(conversationId);
     }
 
+    // Save user message
     if (conversationId) {
       await saveMessage(conversationId, 'user', userMessage.content);
     }
@@ -280,7 +333,10 @@ export default function ChatPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [...messages, userMessage],
+          messages: [...messages, userMessage].map(m => ({
+            role: m.role,
+            content: m.content
+          })),
           model: selectedModel,
           temperature,
           max_tokens: maxTokens,
@@ -305,12 +361,18 @@ export default function ChatPage() {
 
       setMessages(prev => [...prev, assistantMessage]);
       
-      if (conversationId) {
+      // Save assistant message
+      if (conversationId && data.content) {
         await saveMessage(conversationId, 'assistant', assistantMessage.content);
+        
+        // Update conversation timestamp
         await supabase
           .from('conversations')
           .update({ updated_at: new Date().toISOString() })
           .eq('id', conversationId);
+        
+        // Reload conversations to update sidebar
+        await loadConversations();
       }
     } catch (error: any) {
       if (error.name !== 'AbortError') {
@@ -388,6 +450,15 @@ export default function ChatPage() {
     );
   };
 
+  const handleSuggestedPrompt = (prompt: string) => {
+    setInput(prompt);
+    inputRef.current?.focus();
+  };
+
+  const handleVoiceInput = (transcript: string) => {
+    setInput(prev => prev + ' ' + transcript);
+  };
+
   const filteredConversations = conversations.filter(conv => 
     conv.title.toLowerCase().includes(conversationSearch.toLowerCase())
   );
@@ -424,6 +495,15 @@ export default function ChatPage() {
             border: '1px solid #333',
           },
         }}
+      />
+
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        onChange={handleFileAttachment}
+        accept="image/*,.pdf,.doc,.docx,.txt"
       />
 
       {/* Keyboard Shortcuts Modal */}
@@ -745,7 +825,22 @@ export default function ChatPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
               </svg>
               <h2 className="text-xl mb-2">Start a conversation</h2>
-              <p className="text-sm">Ask me anything or choose a suggested prompt</p>
+              <p className="text-sm mb-4">Ask me anything or choose a suggested prompt</p>
+              
+              {/* Suggested Prompts */}
+              {suggestedPrompts.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-w-2xl">
+                  {suggestedPrompts.map((prompt, index) => (
+                    <button
+                      key={index}
+                      onClick={() => handleSuggestedPrompt(prompt)}
+                      className="text-left p-3 bg-[#1a1a1a] border border-[#333333] hover:bg-[#2a2a2a] transition-colors"
+                    >
+                      <p className="text-sm">{prompt}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <div className="max-w-4xl mx-auto">
@@ -785,8 +880,39 @@ export default function ChatPage() {
 
         {/* Input Area */}
         <div className="border-t border-[#333333] p-4">
+          {/* Attached file indicator */}
+          {attachedFile && (
+            <div className="max-w-4xl mx-auto mb-2 flex items-center justify-between bg-[#1a1a1a] border border-[#333333] p-2">
+              <div className="flex items-center space-x-2">
+                <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+                <span className="text-sm text-gray-400">{attachedFile.name}</span>
+              </div>
+              <button
+                onClick={removeAttachment}
+                className="text-gray-400 hover:text-white"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+          
           <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
             <div className="flex space-x-2">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-3 border border-[#333333] hover:bg-[#1a1a1a] transition-colors"
+                title="Attach file"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                </svg>
+              </button>
+              
               <textarea
                 ref={inputRef}
                 value={input}
@@ -804,16 +930,23 @@ export default function ChatPage() {
               />
               
               {voiceEnabled && (
-                <button
-                  type="button"
-                  onClick={() => setIsListening(!isListening)}
-                  className={`px-4 py-3 border ${isListening ? 'bg-red-600 border-red-600' : 'border-[#333333]'} hover:bg-[#1a1a1a] transition-colors`}
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                  </svg>
-                </button>
+                <VoiceInput
+                  onTranscript={handleVoiceInput}
+                  isListening={isListening}
+                  setIsListening={setIsListening}
+                />
               )}
+              
+              <button
+                type="button"
+                onClick={() => setVoiceEnabled(!voiceEnabled)}
+                className={`px-3 py-3 border ${voiceEnabled ? 'border-white bg-[#1a1a1a]' : 'border-[#333333]'} hover:bg-[#1a1a1a] transition-colors`}
+                title="Toggle voice input"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+              </button>
               
               {isLoading ? (
                 <button
@@ -835,7 +968,7 @@ export default function ChatPage() {
             </div>
             
             {isListening && (
-              <div className="text-center text-sm text-red-500 animate-pulse">
+              <div className="text-center text-sm text-red-500 animate-pulse mt-2">
                 Listening... Speak now
               </div>
             )}
@@ -885,6 +1018,18 @@ function MessageBlock({ message, onEdit, onRegenerate, onDelete }: any) {
             </>
           )}
         </div>
+
+        {/* File attachment display */}
+        {message.fileAttachment && (
+          <div className="mb-2 p-2 bg-[#0a0a0a] border border-[#333333]">
+            <div className="flex items-center space-x-2">
+              <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+              </svg>
+              <span className="text-sm">{message.fileAttachment.name}</span>
+            </div>
+          </div>
+        )}
 
         <div className={`relative px-4 py-3 ${
           message.role === 'user' 
