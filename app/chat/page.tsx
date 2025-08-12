@@ -309,6 +309,7 @@ export default function ChatPage() {
     return null;
   };
 
+  // FIX 1: Updated saveMessage function without 'model' field
   const saveMessage = async (conversationId: string, role: string, content: string, type: string = 'text') => {
     try {
       const { error } = await supabase
@@ -318,8 +319,8 @@ export default function ChatPage() {
           role: role,
           content: content,
           type: type,
-          model: selectedModel,
           created_at: new Date().toISOString()
+          // Removed 'model' field that was causing 400 error
         });
       
       if (error) {
@@ -495,10 +496,26 @@ export default function ChatPage() {
       } else {
         // Handle non-streaming response
         const data = await response.json();
+        setIsTyping(false);
+        
+        // FIX 2: Extract content properly from different response formats
+        let messageContent = '';
+        if (typeof data === 'string') {
+          messageContent = data;
+        } else if (data.content) {
+          messageContent = data.content;
+        } else if (data.message) {
+          messageContent = data.message;
+        } else if (data.text) {
+          messageContent = data.text;
+        } else {
+          // If none of the above, convert to string
+          messageContent = JSON.stringify(data);
+        }
         
         const assistantMessage = { 
           role: 'assistant', 
-          content: data.content,
+          content: messageContent,  // Now using the properly extracted content
           timestamp: new Date(),
           type: 'text',
           model: selectedModel
@@ -507,10 +524,10 @@ export default function ChatPage() {
         setMessages([...updatedMessages, assistantMessage]);
         
         if (voiceEnabled && voiceOutput.current) {
-          voiceOutput.current.speak(data.content);
+          voiceOutput.current.speak(messageContent);
         }
         
-        await saveMessage(convId, 'assistant', data.content);
+        await saveMessage(convId, 'assistant', messageContent);
       }
       
       await supabase
