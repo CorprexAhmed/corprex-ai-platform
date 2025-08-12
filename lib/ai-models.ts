@@ -19,21 +19,8 @@ export const AI_MODELS = [
     provider: 'Anthropic',
     description: 'Advanced analysis',
     icon: ''
-  },
-  { 
-    id: 'gemini-1.5-flash', 
-    name: 'Gemini', 
-    provider: 'Google',
-    description: 'Multimodal AI',
-    icon: ''
-  },
-  { 
-    id: 'mixtral-8x7b', 
-    name: 'Mixtral', 
-    provider: 'Groq',
-    description: 'Open source',
-    icon: ''
   }
+  // Removed Gemini and Mixtral as they're not working
 ];
 
 export function getModelConfig(modelId: string) {
